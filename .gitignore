@@ -1,0 +1,14 @@
+# Ignore Markdown files
+*.md
+
+# Ignore build artifacts and cache folders
+bin/
+obj/
+__pycache__/
+*.pyc
+
+# Ignore backup/extra folders
+save2/
+.vs/
+.vscode/
+.idea/
