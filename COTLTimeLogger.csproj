@@ -37,18 +37,6 @@
       <HintPath>$(GameDir)\Cult Of The Lamb_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="UnityEngine.InputLegacyModule">
-      <HintPath>$(GameDir)\Cult Of The Lamb_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="Unity.InputSystem">
-      <HintPath>$(GameDir)\Cult Of The Lamb_Data\Managed\Unity.InputSystem.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="Rewired_Core">
-      <HintPath>$(GameDir)\Cult Of The Lamb_Data\Managed\Rewired_Core.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
     <Reference Include="Sirenix.Serialization">
       <HintPath>$(GameDir)\Cult Of The Lamb_Data\Managed\Sirenix.Serialization.dll</HintPath>
       <Private>false</Private>

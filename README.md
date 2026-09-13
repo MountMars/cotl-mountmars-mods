@@ -10,7 +10,7 @@ A collection of **Cult of the Lamb** BepInEx plugins paired with an asynchronous
 - **COTL Time Logger (`COTLTimeLogger.cs`)**: Periodically captures in-game day and time progression, logging it to the BepInEx console and broadcasting via UDP.
 - **Follower Poop Watcher (`FollowerPoopWatcher.cs`)**: Intercepts follower waste and cleanliness events (poop, vomit, camp hygiene) in real-time.
 - **Follower Thought Reader (`FollowerThoughtReader.cs`)**: Reads and exposes real-time thoughts and state transitions of followers.
-- **Tarot Card Receiver (`TarotCardReceiver.cs`)**: Live in-game card banner receiver (File IPC via `tarot_command.txt`), Clauneck altar override queue (F10), card cycler (F7/F9), and presentation preview (F8) for integrating external BLE/RFID tarot card readers without interfering with regular run state.
+- **Tarot Card Receiver (`TarotCardReceiver.cs`)**: Live in-game card banner receiver and Clauneck altar override queue (File IPC via `tarot_command.txt` and `tarot_queue.txt`) for integrating external BLE/RFID tarot card readers without interfering with regular run state.
   - See **[TarotCardList.md](file:///c:/Program%20Files%20%28x86%29/Steam/steamapps/common/Cult%20of%20the%20Lamb/BepInEx/plugins/TarotCardList.md)** for the complete list of all 104 `TarotCards.Card` enum values.
   - See **[TarotCardsGuide.md](file:///c:/Program%20Files%20%28x86%29/Steam/steamapps/common/Cult%20of%20the%20Lamb/BepInEx/plugins/TarotCardsGuide.md)** for the developer integration guide.
 - **UDP Messenger (`Common/UdpMessenger.cs`)**: Shared helper module that serializes and transmits telemetry packets over UDP to `127.0.0.1:9999`.

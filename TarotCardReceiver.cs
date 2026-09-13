@@ -2,8 +2,6 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using BepInEx;
@@ -11,7 +9,6 @@ using BepInEx.Logging;
 using HarmonyLib;
 using Lamb.UI;
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 namespace COTLTarotCardReceiver
 {
@@ -27,16 +24,6 @@ namespace COTLTarotCardReceiver
 
         public static bool OverrideClauneck = true;
 
-        // Windows Win32 API for direct hardware key detection
-        [DllImport("user32.dll")]
-        private static extern short GetAsyncKeyState(int vKey);
-
-        public const int VK_F7 = 0x76;
-        public const int VK_F8 = 0x77;
-        public const int VK_F9 = 0x78;
-        public const int VK_F10 = 0x79;
-
-        private static float keyCooldownTimer = 0f;
         private static bool hasLoggedReady = false;
 
         // Deduplication timer to avoid double-triggers from simultaneous UDP + HTTP
@@ -166,63 +153,6 @@ namespace COTLTarotCardReceiver
             }
         }
 
-        private static bool CheckHardwareKeyDown(int vKey)
-        {
-            try
-            {
-                return (GetAsyncKeyState(vKey) & 0x8000) != 0;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        public static bool CheckKeyPressed(int vKey, KeyCode legacyKey, Key newKey)
-        {
-            // 1. Hardware Windows key state
-            if (CheckHardwareKeyDown(vKey))
-            {
-                return true;
-            }
-
-            // 2. Rewired Input
-            try
-            {
-                if (Rewired.ReInput.isReady &&
-                    Rewired.ReInput.controllers != null &&
-                    Rewired.ReInput.controllers.Keyboard != null &&
-                    Rewired.ReInput.controllers.Keyboard.GetKeyDown(legacyKey))
-                {
-                    return true;
-                }
-            }
-            catch { }
-
-            // 3. Unity New Input System
-            try
-            {
-                var keyboard = Keyboard.current;
-                if (keyboard != null && keyboard[newKey].wasPressedThisFrame)
-                {
-                    return true;
-                }
-            }
-            catch { }
-
-            // 4. Unity Legacy Input
-            try
-            {
-                if (Input.GetKeyDown(legacyKey))
-                {
-                    return true;
-                }
-            }
-            catch { }
-
-            return false;
-        }
-
         public static void TickInGame()
         {
             // Strictly guard: only execute once save data is loaded (in camp or dungeon)
@@ -277,44 +207,6 @@ namespace COTLTarotCardReceiver
                 CurrentTestCard = incomingCard;
                 Log.LogInfo($"[TarotCardReceiver] Processing incoming card on main thread: {incomingCard}");
                 ShowCardBanner(incomingCard);
-            }
-
-            // 2. Cooldown check to prevent rapid repeating of hotkeys
-            if (Time.unscaledTime < keyCooldownTimer)
-            {
-                return;
-            }
-
-            // 3. Hotkeys
-            if (CheckKeyPressed(VK_F8, KeyCode.F8, Key.F8))
-            {
-                keyCooldownTimer = Time.unscaledTime + 0.4f;
-                Log.LogInfo($"[TarotCardReceiver] >>> F8 DETECTED! Showing card: {CurrentTestCard} <<<");
-                ShowCardBanner(CurrentTestCard);
-                return;
-            }
-
-            if (CheckKeyPressed(VK_F7, KeyCode.F7, Key.F7))
-            {
-                keyCooldownTimer = Time.unscaledTime + 0.3f;
-                CycleCard(-1);
-                return;
-            }
-
-            if (CheckKeyPressed(VK_F9, KeyCode.F9, Key.F9))
-            {
-                keyCooldownTimer = Time.unscaledTime + 0.3f;
-                CycleCard(1);
-                return;
-            }
-
-            if (CheckKeyPressed(VK_F10, KeyCode.F10, Key.F10))
-            {
-                keyCooldownTimer = Time.unscaledTime + 0.4f;
-                ClauneckQueue.Enqueue(CurrentTestCard);
-                Log.LogInfo($"[TarotCardReceiver] F10 pressed: Enqueued {CurrentTestCard} for next Clauneck altar choice.");
-                ShowNotification($"Queued for Clauneck: {CurrentTestCard}");
-                return;
             }
         }
 
