@@ -1,5 +1,6 @@
-# Ignore Markdown files
+# Ignore Markdown files, except README
 *.md
+!README.md
 
 # Ignore build artifacts and cache folders
 bin/
