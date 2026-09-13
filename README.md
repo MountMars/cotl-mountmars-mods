@@ -48,6 +48,19 @@ A collection of **Cult of the Lamb** BepInEx plugins paired with an asynchronous
 
 ---
 
+## Disclaimer & Legal Notice
+
+This is an independent, unofficial, private hobby project intended solely for personal, educational, and research purposes.
+
+This project is **not** affiliated with, authorized by, endorsed by, sponsored by, or in any way officially associated with **Massive Monster Pty Ltd** (the developer) or **Devolver Digital, Inc.** (the publisher), or any of their subsidiaries or affiliates.
+
+*Cult of the Lamb*, all related titles, logos, characters, artwork, and associated intellectual property are trademarks or registered trademarks of **Massive Monster Pty Ltd** and **Devolver Digital, Inc.** All other trademarks and copyrights are the property of their respective owners.
+
+This software is provided "as is" without warranty of any kind, express or implied. Use of this software is at your own risk.
+
+---
+
 ## License
 
 This project is licensed under the MIT License.
+
