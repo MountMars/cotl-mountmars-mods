@@ -1,9 +1,9 @@
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
-using System.Threading;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -18,15 +18,23 @@ namespace COTLTarotCardReceiver
         public static ManualLogSource Log;
         public static TarotCards.Card CurrentTestCard = TarotCards.Card.TheDeal;
 
-        // Thread-safe queues
+        // Thread-safe queue for outside-Clauneck banner preview
         public static readonly ConcurrentQueue<TarotCards.Card> PendingCardsToShow = new ConcurrentQueue<TarotCards.Card>();
         public static readonly ConcurrentQueue<TarotCards.Card> ClauneckQueue = new ConcurrentQueue<TarotCards.Card>();
 
         public static bool OverrideClauneck = true;
 
+        // Clauneck scan-and-present ritual state
+        public static bool IsClauneckWaitingForCard = false;
+        public static bool IsCardPresented = false;
+        public static bool IsReplacingOverlay = false;
+        public static Interaction_Tarot CurrentActiveClauneck = null;
+        public static TarotCards.TarotCard LastPresentedCard = null;
+        public static UITarotPickUpOverlayController CurrentTarotOverlay = null;
+
         private static bool hasLoggedReady = false;
 
-        // Deduplication timer to avoid double-triggers from simultaneous UDP + HTTP
+        // Deduplication timer to avoid double-triggers from simultaneous UDP + HTTP / fast repeat scans
         private static float lastCardTime = 0f;
         private static TarotCards.Card lastEnqueuedCard;
 
@@ -132,7 +140,7 @@ namespace COTLTarotCardReceiver
         {
             if (TryParseCard(candidate, out var card))
             {
-                // Deduplicate if exact same card arrived within 1.0s (e.g. from simultaneous UDP + HTTP)
+                // Deduplicate if exact same card arrived within 1.0s (e.g. from simultaneous UDP + HTTP / fast repeat)
                 if (card == lastEnqueuedCard && (Time.unscaledTime - lastCardTime) < 1.0f)
                 {
                     Log.LogInfo($"[TarotCardReceiver] Duplicate '{card}' from {source} ignored (within 1s).");
@@ -141,11 +149,17 @@ namespace COTLTarotCardReceiver
 
                 lastCardTime = Time.unscaledTime;
                 lastEnqueuedCard = card;
+                CurrentTestCard = card;
+
+                if (IsClauneckWaitingForCard)
+                {
+                    Log.LogInfo($"[TarotCardReceiver] Card received during Clauneck ritual via {source}: {card}");
+                    PresentClauneckCard(card);
+                    return;
+                }
 
                 PendingCardsToShow.Enqueue(card);
-                ClauneckQueue.Enqueue(card);
-                CurrentTestCard = card;
-                Log.LogInfo($"[TarotCardReceiver] Successfully queued card via {source}: {card}");
+                Log.LogInfo($"[TarotCardReceiver] Successfully queued preview card via {source}: {card}");
             }
             else
             {
@@ -201,12 +215,15 @@ namespace COTLTarotCardReceiver
             }
             catch { }
 
-            // 1. Process pending cards from File IPC
-            while (PendingCardsToShow.TryDequeue(out var incomingCard))
+            // 1. Process pending preview cards only when Clauneck is NOT waiting
+            if (!IsClauneckWaitingForCard)
             {
-                CurrentTestCard = incomingCard;
-                Log.LogInfo($"[TarotCardReceiver] Processing incoming card on main thread: {incomingCard}");
-                ShowCardBanner(incomingCard);
+                while (PendingCardsToShow.TryDequeue(out var incomingCard))
+                {
+                    CurrentTestCard = incomingCard;
+                    Log.LogInfo($"[TarotCardReceiver] Processing incoming card on main thread: {incomingCard}");
+                    ShowCardBanner(incomingCard);
+                }
             }
         }
 
@@ -243,6 +260,7 @@ namespace COTLTarotCardReceiver
             {
                 if (NotificationCentre.Instance != null)
                 {
+                    NotificationCentre.Instance.Show(true);
                     NotificationCentre.Instance.PlayGenericNotification(message, NotificationBase.Flair.Positive);
                 }
             }
@@ -262,7 +280,223 @@ namespace COTLTarotCardReceiver
             ShowNotification($"Selected: {CurrentTestCard}");
         }
 
+        // --- Clauneck Scan-and-Present Ritual ---
 
+        public static IEnumerator ClauneckCustomTarotRoutine(Interaction_Tarot interactionTarot)
+        {
+            IsClauneckWaitingForCard = true;
+            IsCardPresented = false;
+            IsReplacingOverlay = false;
+            CurrentActiveClauneck = interactionTarot;
+            LastPresentedCard = null;
+            CurrentTarotOverlay = null;
+
+            while (ClauneckQueue.TryDequeue(out _)) { }
+            while (PendingCardsToShow.TryDequeue(out _)) { }
+
+            if (HUD_Manager.Instance != null)
+            {
+                HUD_Manager.Instance.Hide(false, 0, false);
+            }
+            GameManager.GetInstance().CameraSetTargetZoom(4f);
+            LetterBox.Show(false);
+
+            PlayerFarming player = interactionTarot.playerFarming != null ? interactionTarot.playerFarming : PlayerFarming.Instance;
+            if (player != null)
+            {
+                player.state.CURRENT_STATE = StateMachine.State.CustomAnimation;
+                player.state.facingAngle = -90f;
+                if (player.simpleSpineAnimator != null)
+                {
+                    player.simpleSpineAnimator.Animate("cards/cards-start", 0, false);
+                    player.simpleSpineAnimator.AddAnimate("cards/cards-loop", 0, true, 0f);
+                }
+            }
+
+            CameraFollowTarget cam = CameraFollowTarget.Instance;
+            if (cam != null)
+            {
+                Traverse.Create(interactionTarot).Field("c").SetValue(cam);
+                cam.DisablePlayerLook = true;
+            }
+
+            var centreMethod = AccessTools.Method(typeof(Interaction_Tarot), "CentrePlayer");
+            if (centreMethod != null)
+            {
+                interactionTarot.StartCoroutine((IEnumerator)centreMethod.Invoke(interactionTarot, null));
+            }
+
+            if (AudioManager.Instance != null)
+            {
+                AudioManager.Instance.PlayOneShot("event:/tarot/tarot_card_pull", interactionTarot.gameObject);
+            }
+
+            yield return new WaitForSeconds(0.1f);
+            GameManager.GetInstance().CameraSetTargetZoom(6f);
+
+            var tarotcardsGo = interactionTarot.tarotcards;
+            if (tarotcardsGo != null)
+            {
+                tarotcardsGo.SetActive(false);
+            }
+
+            ShowNotification("[MountMars] Draw a Tarot card and scan it");
+            Log.LogInfo("[TarotCardReceiver] Clauneck ritual started. Prompted player: Draw a Tarot card and scan it.");
+
+            while (IsClauneckWaitingForCard)
+            {
+                // If player cancelled before any card was presented, gracefully abort
+                if (!IsCardPresented && InputManager.UI != null && InputManager.UI.GetCancelButtonDown(null))
+                {
+                    Log.LogInfo("[TarotCardReceiver] Player cancelled waiting for Tarot card scan.");
+                    AbortClauneckRitual(interactionTarot);
+                    yield break;
+                }
+
+                if (interactionTarot == null || !interactionTarot.gameObject.activeInHierarchy)
+                {
+                    ResetClauneckState();
+                    yield break;
+                }
+
+                yield return null;
+            }
+        }
+
+        public static void AbortClauneckRitual(Interaction_Tarot interactionTarot)
+        {
+            ResetClauneckState();
+
+            if (interactionTarot != null)
+            {
+                interactionTarot.Activated = false;
+                if (interactionTarot.simpleBarkBeforeCard != null)
+                {
+                    interactionTarot.simpleBarkBeforeCard.enabled = true;
+                }
+
+                var backMethod = AccessTools.Method(typeof(Interaction_Tarot), "BackToIdleRoutine", new Type[] { typeof(TarotCards.TarotCard), typeof(float) });
+                if (backMethod != null)
+                {
+                    var routine = (IEnumerator)backMethod.Invoke(interactionTarot, new object[] { null, 0f });
+                    interactionTarot.StartCoroutine(routine);
+                }
+            }
+        }
+
+        public static void PresentClauneckCard(TarotCards.Card cardType)
+        {
+            try
+            {
+                Log.LogInfo($"[TarotCardReceiver] Presenting Clauneck Tarot card: {cardType}");
+                TarotCards.TarotCard card = new TarotCards.TarotCard(cardType, 0);
+                LastPresentedCard = card;
+                IsCardPresented = true;
+
+                if (CurrentTarotOverlay != null)
+                {
+                    IsReplacingOverlay = true;
+                    try
+                    {
+                        CurrentTarotOverlay.Hide(true);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.LogWarning($"[TarotCardReceiver] Error hiding previous overlay: {ex.Message}");
+                    }
+                    IsReplacingOverlay = false;
+                    CurrentTarotOverlay = null;
+                }
+
+                if (UIManager.Instance != null)
+                {
+                    CurrentTarotOverlay = UIManager.Instance.ShowTarotPickUp(card);
+                    if (CurrentTarotOverlay != null)
+                    {
+                        CurrentTarotOverlay.OnHidden += () =>
+                        {
+                            if (!IsReplacingOverlay)
+                            {
+                                OnClauneckCardDismissed();
+                            }
+                        };
+                    }
+                    else
+                    {
+                        Log.LogWarning("[TarotCardReceiver] UIManager.ShowTarotPickUp returned null!");
+                    }
+                }
+                else
+                {
+                    Log.LogWarning("[TarotCardReceiver] UIManager.Instance is null when presenting Clauneck card!");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.LogError($"[TarotCardReceiver] Exception in PresentClauneckCard: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        public static void OnClauneckCardDismissed()
+        {
+            try
+            {
+                Log.LogInfo($"[TarotCardReceiver] Player dismissed card overlay. Chosen card: {LastPresentedCard?.CardType}");
+
+                var chosenCard = LastPresentedCard;
+                var clauneck = CurrentActiveClauneck;
+
+                ResetClauneckState();
+
+                if (clauneck != null)
+                {
+                    var giveRoutine = Traverse.Create(clauneck).Field("giveTarotRoutine").GetValue<Coroutine>();
+                    if (giveRoutine != null)
+                    {
+                        try
+                        {
+                            clauneck.StopCoroutine(giveRoutine);
+                        }
+                        catch { }
+                        Traverse.Create(clauneck).Field("giveTarotRoutine").SetValue(null);
+                    }
+
+                    var backMethod = AccessTools.Method(typeof(Interaction_Tarot), "BackToIdleRoutine", new Type[] { typeof(TarotCards.TarotCard), typeof(float) });
+                    if (backMethod != null)
+                    {
+                        var routine = (IEnumerator)backMethod.Invoke(clauneck, new object[] { chosenCard, 0f });
+                        clauneck.StartCoroutine(routine);
+                    }
+                    else
+                    {
+                        Log.LogError("[TarotCardReceiver] Could not find BackToIdleRoutine on Interaction_Tarot!");
+                    }
+
+                    if (DataManager.Instance != null && !DataManager.Instance.HasEncounteredTarot)
+                    {
+                        if (clauneck.introGiveDeck != null)
+                        {
+                            clauneck.introGiveDeck.enabled = true;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.LogError($"[TarotCardReceiver] Exception in OnClauneckCardDismissed: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        public static void ResetClauneckState()
+        {
+            IsClauneckWaitingForCard = false;
+            IsCardPresented = false;
+            IsReplacingOverlay = false;
+            CurrentTarotOverlay = null;
+            CurrentActiveClauneck = null;
+            while (ClauneckQueue.TryDequeue(out _)) { }
+            while (PendingCardsToShow.TryDequeue(out _)) { }
+        }
 
         public static bool TryGetQueuedClauneckCard(out TarotCards.Card card)
         {
@@ -281,26 +515,21 @@ namespace COTLTarotCardReceiver
         }
     }
 
-    // Intercept Clauneck's altar offering choices
-    [HarmonyPatch(typeof(Interaction_Tarot), "GetCard")]
-    public static class ClauneckTarotChoicePatch
+    // Intercept Clauneck's altar ritual
+    [HarmonyPatch(typeof(Interaction_Tarot), "DoRoutine")]
+    public static class Interaction_Tarot_DoRoutine_Patch
     {
         [HarmonyPrefix]
-        public static bool Prefix(bool canBeCorrupted, ref TarotCards.TarotCard __result)
+        public static bool Prefix(Interaction_Tarot __instance)
         {
             if (!TarotCardReceiverPlugin.OverrideClauneck)
             {
                 return true;
             }
 
-            if (TarotCardReceiverPlugin.TryGetQueuedClauneckCard(out var queuedCard))
-            {
-                TarotCardReceiverPlugin.Log?.LogInfo($"[ClauneckPatch] Overriding Clauneck choice with queued card: {queuedCard}");
-                __result = new TarotCards.TarotCard(queuedCard, 0);
-                return false;
-            }
-
-            return true;
+            var customRoutine = __instance.StartCoroutine(TarotCardReceiverPlugin.ClauneckCustomTarotRoutine(__instance));
+            Traverse.Create(__instance).Field("giveTarotRoutine").SetValue(customRoutine);
+            return false;
         }
     }
 }
