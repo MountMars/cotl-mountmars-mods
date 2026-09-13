@@ -8,6 +8,7 @@ using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
 using Lamb.UI;
+using MMTools;
 using UnityEngine;
 
 namespace COTLTarotCardReceiver
@@ -340,8 +341,9 @@ namespace COTLTarotCardReceiver
                 tarotcardsGo.SetActive(false);
             }
 
-            ShowNotification("[MountMars] Draw a Tarot card and scan it");
-            Log.LogInfo("[TarotCardReceiver] Clauneck ritual started. Prompted player: Draw a Tarot card and scan it.");
+            ShowClauneckBark(interactionTarot, "Draw thy card, Lamb, and reveal thy destiny...");
+            ShowNotification("Scan a Tarot card (Esc to cancel)");
+            Log.LogInfo("[TarotCardReceiver] Clauneck ritual started. Displayed bark and scan notification.");
 
             while (IsClauneckWaitingForCard)
             {
@@ -365,6 +367,7 @@ namespace COTLTarotCardReceiver
 
         public static void AbortClauneckRitual(Interaction_Tarot interactionTarot)
         {
+            CloseClauneckBark();
             ResetClauneckState();
 
             if (interactionTarot != null)
@@ -388,6 +391,7 @@ namespace COTLTarotCardReceiver
         {
             try
             {
+                CloseClauneckBark();
                 Log.LogInfo($"[TarotCardReceiver] Presenting Clauneck Tarot card: {cardType}");
                 TarotCards.TarotCard card = new TarotCards.TarotCard(cardType, 0);
                 LastPresentedCard = card;
@@ -441,6 +445,7 @@ namespace COTLTarotCardReceiver
         {
             try
             {
+                CloseClauneckBark();
                 Log.LogInfo($"[TarotCardReceiver] Player dismissed card overlay. Chosen card: {LastPresentedCard?.CardType}");
 
                 var chosenCard = LastPresentedCard;
@@ -489,6 +494,7 @@ namespace COTLTarotCardReceiver
 
         public static void ResetClauneckState()
         {
+            CloseClauneckBark();
             IsClauneckWaitingForCard = false;
             IsCardPresented = false;
             IsReplacingOverlay = false;
@@ -496,6 +502,54 @@ namespace COTLTarotCardReceiver
             CurrentActiveClauneck = null;
             while (ClauneckQueue.TryDequeue(out _)) { }
             while (PendingCardsToShow.TryDequeue(out _)) { }
+        }
+
+        public static void ShowClauneckBark(Interaction_Tarot interactionTarot, string text)
+        {
+            try
+            {
+                GameObject speaker = interactionTarot.gameObject;
+                string sound = "event:/dialogue/shop_tarot_clauneck/standard_clauneck";
+                Vector3 offset = new Vector3(0f, 2.5f, 0f);
+
+                if (interactionTarot.simpleBarkBeforeCard != null && 
+                    interactionTarot.simpleBarkBeforeCard.Entries != null && 
+                    interactionTarot.simpleBarkBeforeCard.Entries.Count > 0)
+                {
+                    var template = interactionTarot.simpleBarkBeforeCard.Entries[0];
+                    if (template != null)
+                    {
+                        if (template.Speaker != null) speaker = template.Speaker;
+                        if (!string.IsNullOrEmpty(template.soundPath)) sound = template.soundPath;
+                        if (template.Offset != Vector3.zero) offset = template.Offset;
+                    }
+                }
+
+                var entry = new ConversationEntry(speaker, null, null, sound, null, "Clauneck");
+                entry.DisplayText = text;
+                entry.Offset = offset;
+
+                var entries = new List<ConversationEntry> { entry };
+                var convObj = new ConversationObject(entries, null, null, null);
+                MMConversation.PlayBark(convObj, false);
+                Log.LogInfo($"[TarotCardReceiver] Successfully triggered Clauneck bark: '{text}' on {speaker.name} (offset: {offset})");
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"[TarotCardReceiver] Failed to show Clauneck bark: {ex.Message}");
+            }
+        }
+
+        public static void CloseClauneckBark()
+        {
+            try
+            {
+                if (MMConversation.mmConversation != null && MMConversation.isBark)
+                {
+                    MMConversation.mmConversation.Close(true, null, false);
+                }
+            }
+            catch { }
         }
 
         public static bool TryGetQueuedClauneckCard(out TarotCards.Card card)
@@ -530,6 +584,44 @@ namespace COTLTarotCardReceiver
             var customRoutine = __instance.StartCoroutine(TarotCardReceiverPlugin.ClauneckCustomTarotRoutine(__instance));
             Traverse.Create(__instance).Field("giveTarotRoutine").SetValue(customRoutine);
             return false;
+        }
+    }
+
+    // Allow custom DisplayText in MMConversation barks without requiring localization keys
+    [HarmonyPatch(typeof(MMConversation), "UpdateText")]
+    public static class MMConversation_UpdateText_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(MMConversation __instance)
+        {
+            try
+            {
+                if (MMConversation.CURRENT_CONVERSATION != null &&
+                    MMConversation.CURRENT_CONVERSATION.Entries != null &&
+                    MMConversation.Position >= 0 &&
+                    MMConversation.Position < MMConversation.CURRENT_CONVERSATION.Entries.Count)
+                {
+                    var entry = MMConversation.CURRENT_CONVERSATION.Entries[MMConversation.Position];
+                    if (!string.IsNullOrEmpty(entry.DisplayText))
+                    {
+                        if (__instance.TitleText != null)
+                        {
+                            __instance.TitleText.text = !string.IsNullOrEmpty(entry.CharacterName) ? entry.CharacterName : "Clauneck";
+                        }
+                        if (__instance.TextPlayer != null)
+                        {
+                            __instance.TextPlayer.ShowText(entry.DisplayText);
+                        }
+                        TarotCardReceiverPlugin.Log?.LogInfo($"[TarotCardReceiver] MMConversation.UpdateText rendered DisplayText: '{entry.DisplayText}'");
+                        return false;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                TarotCardReceiverPlugin.Log?.LogWarning($"[TarotCardReceiver] Error in MMConversation.UpdateText patch: {ex.Message}");
+            }
+            return true;
         }
     }
 }
