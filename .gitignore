@@ -1,6 +1,8 @@
-# Ignore Markdown files, except README
+# Ignore Markdown files, except documentation
 *.md
 !README.md
+!TarotCardList.md
+!TarotCardsGuide.md
 
 # Ignore build artifacts and cache folders
 bin/
@@ -13,3 +15,7 @@ save2/
 .vs/
 .vscode/
 .idea/
+
+# Ignore runtime logs and IPC files
+*.log
+tarot_command.txt
