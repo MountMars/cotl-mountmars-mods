@@ -24,12 +24,17 @@ namespace COTLTarotCardReceiver
         public static readonly ConcurrentQueue<TarotCards.Card> ClauneckQueue = new ConcurrentQueue<TarotCards.Card>();
 
         public static bool OverrideClauneck = true;
+        public static bool OverrideShrine = true;
 
-        // Clauneck scan-and-present ritual state
+        // Clauneck & Shrine scan-and-present ritual state
         public static bool IsClauneckWaitingForCard = false;
+        public static bool IsShrineWaitingForCard = false;
+        public static bool IsWaitingForCard => IsClauneckWaitingForCard || IsShrineWaitingForCard;
         public static bool IsCardPresented = false;
         public static bool IsReplacingOverlay = false;
         public static Interaction_Tarot CurrentActiveClauneck = null;
+        public static Shrines CurrentActiveShrine = null;
+        public static PlayerFarming CurrentShrinePlayer = null;
         public static TarotCards.TarotCard LastPresentedCard = null;
         public static UITarotPickUpOverlayController CurrentTarotOverlay = null;
 
@@ -152,10 +157,11 @@ namespace COTLTarotCardReceiver
                 lastEnqueuedCard = card;
                 CurrentTestCard = card;
 
-                if (IsClauneckWaitingForCard)
+                if (IsWaitingForCard)
                 {
-                    Log.LogInfo($"[TarotCardReceiver] Card received during Clauneck ritual via {source}: {card}");
-                    PresentClauneckCard(card);
+                    string ritualType = IsShrineWaitingForCard ? "Offering Shrine" : "Clauneck";
+                    Log.LogInfo($"[TarotCardReceiver] Card received during {ritualType} ritual via {source}: {card}");
+                    PresentRitualCard(card);
                     return;
                 }
 
@@ -216,8 +222,8 @@ namespace COTLTarotCardReceiver
             }
             catch { }
 
-            // 1. Process pending preview cards only when Clauneck is NOT waiting
-            if (!IsClauneckWaitingForCard)
+            // 1. Process pending preview cards only when NOT in an active ritual
+            if (!IsWaitingForCard)
             {
                 while (PendingCardsToShow.TryDequeue(out var incomingCard))
                 {
@@ -387,12 +393,131 @@ namespace COTLTarotCardReceiver
             }
         }
 
+        // --- Offering Shrine Scan-and-Present Ritual ---
+
+        public static IEnumerator ShrineCustomTarotRoutine(Shrines shrine, PlayerFarming playerFarming)
+        {
+            IsShrineWaitingForCard = true;
+            IsCardPresented = false;
+            IsReplacingOverlay = false;
+            CurrentActiveShrine = shrine;
+            CurrentShrinePlayer = playerFarming;
+            LastPresentedCard = null;
+            CurrentTarotOverlay = null;
+
+            while (ClauneckQueue.TryDequeue(out _)) { }
+            while (PendingCardsToShow.TryDequeue(out _)) { }
+
+            if (HUD_Manager.Instance != null)
+            {
+                HUD_Manager.Instance.Hide(false, 0, false);
+            }
+            GameManager.GetInstance().CameraSetTargetZoom(4f);
+            LetterBox.Show(false);
+
+            PlayerFarming player = playerFarming != null ? playerFarming : (shrine.playerFarming != null ? shrine.playerFarming : PlayerFarming.Instance);
+            if (player != null)
+            {
+                player.state.CURRENT_STATE = StateMachine.State.CustomAnimation;
+                player.state.facingAngle = -90f;
+                if (player.simpleSpineAnimator != null)
+                {
+                    player.simpleSpineAnimator.Animate("cards/cards-start", 0, false);
+                    player.simpleSpineAnimator.AddAnimate("cards/cards-loop", 0, true, 0f);
+                }
+            }
+
+            CameraFollowTarget cam = CameraFollowTarget.Instance;
+            if (cam != null)
+            {
+                cam.DisablePlayerLook = true;
+            }
+
+            if (AudioManager.Instance != null)
+            {
+                AudioManager.Instance.PlayOneShot("event:/tarot/tarot_card_pull", shrine.gameObject);
+            }
+
+            yield return new WaitForSeconds(0.1f);
+            GameManager.GetInstance().CameraSetTargetZoom(6f);
+
+            ShowNotification("Offering accepted. Scan a Tarot card (Esc to cancel)");
+            Log.LogInfo("[TarotCardReceiver] Shrine ritual started. Waiting for card scan via IPC...");
+
+            while (IsShrineWaitingForCard)
+            {
+                if (!IsCardPresented && InputManager.UI != null && InputManager.UI.GetCancelButtonDown(null))
+                {
+                    Log.LogInfo("[TarotCardReceiver] Player cancelled waiting for Shrine Tarot card scan.");
+                    AbortShrineRitual(shrine, player);
+                    yield break;
+                }
+
+                if (shrine == null || !shrine.gameObject.activeInHierarchy)
+                {
+                    ResetRitualState();
+                    yield break;
+                }
+
+                yield return null;
+            }
+        }
+
+        public static void AbortShrineRitual(Shrines shrine, PlayerFarming player)
+        {
+            ResetRitualState();
+
+            try
+            {
+                Time.timeScale = 1f;
+                LetterBox.Hide(true);
+                if (HUD_Manager.Instance != null)
+                {
+                    HUD_Manager.Instance.Show(0, false);
+                }
+                if (AudioManager.Instance != null && shrine != null)
+                {
+                    AudioManager.Instance.PlayOneShot("event:/tarot/tarot_card_close", shrine.gameObject);
+                }
+                GameManager.GetInstance()?.CameraResetTargetZoom();
+                if (CameraFollowTarget.Instance != null)
+                {
+                    CameraFollowTarget.Instance.DisablePlayerLook = false;
+                }
+                GameManager.GetInstance()?.UnFreezeAllies();
+
+                if (player != null)
+                {
+                    if (player.simpleSpineAnimator != null)
+                    {
+                        player.simpleSpineAnimator.Animate("cards/cards-stop-seperate", 0, false);
+                        player.simpleSpineAnimator.AddAnimate("idle", 0, true, 0f);
+                    }
+                    if (player.state != null)
+                    {
+                        player.state.CURRENT_STATE = StateMachine.State.Idle;
+                    }
+                    player.SpineUseDeltaTime(true);
+                }
+                SimpleSetCamera.EnableAll();
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"[TarotCardReceiver] Error during AbortShrineRitual: {ex.Message}");
+            }
+        }
+
         public static void PresentClauneckCard(TarotCards.Card cardType)
+        {
+            PresentRitualCard(cardType);
+        }
+
+        public static void PresentRitualCard(TarotCards.Card cardType)
         {
             try
             {
                 CloseClauneckBark();
-                Log.LogInfo($"[TarotCardReceiver] Presenting Clauneck Tarot card: {cardType}");
+                Log.LogInfo($"[TarotCardReceiver] Presenting Tarot card: {cardType}");
                 TarotCards.TarotCard card = new TarotCards.TarotCard(cardType, 0);
                 LastPresentedCard = card;
                 IsCardPresented = true;
@@ -421,7 +546,7 @@ namespace COTLTarotCardReceiver
                         {
                             if (!IsReplacingOverlay)
                             {
-                                OnClauneckCardDismissed();
+                                OnRitualCardDismissed();
                             }
                         };
                     }
@@ -432,16 +557,21 @@ namespace COTLTarotCardReceiver
                 }
                 else
                 {
-                    Log.LogWarning("[TarotCardReceiver] UIManager.Instance is null when presenting Clauneck card!");
+                    Log.LogWarning("[TarotCardReceiver] UIManager.Instance is null when presenting ritual card!");
                 }
             }
             catch (Exception ex)
             {
-                Log.LogError($"[TarotCardReceiver] Exception in PresentClauneckCard: {ex.Message}\n{ex.StackTrace}");
+                Log.LogError($"[TarotCardReceiver] Exception in PresentRitualCard: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
         public static void OnClauneckCardDismissed()
+        {
+            OnRitualCardDismissed();
+        }
+
+        public static void OnRitualCardDismissed()
         {
             try
             {
@@ -450,8 +580,10 @@ namespace COTLTarotCardReceiver
 
                 var chosenCard = LastPresentedCard;
                 var clauneck = CurrentActiveClauneck;
+                var shrine = CurrentActiveShrine;
+                var shrinePlayer = CurrentShrinePlayer;
 
-                ResetClauneckState();
+                ResetRitualState();
 
                 if (clauneck != null)
                 {
@@ -485,21 +617,49 @@ namespace COTLTarotCardReceiver
                         }
                     }
                 }
+                else if (shrine != null)
+                {
+                    Log.LogInfo($"[TarotCardReceiver] Completing Shrine tarot ritual with card: {chosenCard?.CardType}");
+
+                    if (shrine.playerFarming == null)
+                    {
+                        shrine.playerFarming = shrinePlayer ?? PlayerFarming.Instance;
+                    }
+
+                    var backMethod = AccessTools.Method(typeof(Shrines), "BackToIdleRoutine", new Type[] { typeof(TarotCards.TarotCard), typeof(float) });
+                    if (backMethod != null)
+                    {
+                        var routine = (IEnumerator)backMethod.Invoke(shrine, new object[] { chosenCard, 0f });
+                        shrine.StartCoroutine(routine);
+                    }
+                    else
+                    {
+                        Log.LogError("[TarotCardReceiver] Could not find BackToIdleRoutine on Shrines!");
+                    }
+                }
             }
             catch (Exception ex)
             {
-                Log.LogError($"[TarotCardReceiver] Exception in OnClauneckCardDismissed: {ex.Message}\n{ex.StackTrace}");
+                Log.LogError($"[TarotCardReceiver] Exception in OnRitualCardDismissed: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
         public static void ResetClauneckState()
         {
+            ResetRitualState();
+        }
+
+        public static void ResetRitualState()
+        {
             CloseClauneckBark();
             IsClauneckWaitingForCard = false;
+            IsShrineWaitingForCard = false;
             IsCardPresented = false;
             IsReplacingOverlay = false;
             CurrentTarotOverlay = null;
             CurrentActiveClauneck = null;
+            CurrentActiveShrine = null;
+            CurrentShrinePlayer = null;
             while (ClauneckQueue.TryDequeue(out _)) { }
             while (PendingCardsToShow.TryDequeue(out _)) { }
         }
@@ -583,6 +743,23 @@ namespace COTLTarotCardReceiver
 
             var customRoutine = __instance.StartCoroutine(TarotCardReceiverPlugin.ClauneckCustomTarotRoutine(__instance));
             Traverse.Create(__instance).Field("giveTarotRoutine").SetValue(customRoutine);
+            return false;
+        }
+    }
+
+    // Intercept Offering Shrine's tarot card draw
+    [HarmonyPatch(typeof(Shrines), "DrawCardRoutine")]
+    public static class Shrines_DrawCardRoutine_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(Shrines __instance, PlayerFarming playerFarming, ref IEnumerator __result)
+        {
+            if (!TarotCardReceiverPlugin.OverrideShrine || __instance.TypeOfShrine != Shrines.ShrineType.TAROT_CARD)
+            {
+                return true;
+            }
+
+            __result = TarotCardReceiverPlugin.ShrineCustomTarotRoutine(__instance, playerFarming);
             return false;
         }
     }
