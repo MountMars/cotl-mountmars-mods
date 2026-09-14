@@ -1,5 +1,7 @@
 import asyncio
 import os
+import random
+import winsound
 from bleak import BleakClient
 from bleak.exc import BleakError
 
@@ -14,6 +16,25 @@ from bridge_common import (
     sanitize_card_message,
     write_tarot_ipc_file,
 )
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+FIRE_WHOOSH_SOUNDS = [
+    os.path.join(SCRIPT_DIR, "1 fire whoosh.wav"),
+    os.path.join(SCRIPT_DIR, "2 fire whoosh.wav"),
+    os.path.join(SCRIPT_DIR, "3 fire whoosh.wav"),
+]
+AVAILABLE_FIRE_WHOOSH_SOUNDS = [path for path in FIRE_WHOOSH_SOUNDS if os.path.isfile(path)]
+
+
+def play_fire_whoosh_sound():
+    if not AVAILABLE_FIRE_WHOOSH_SOUNDS:
+        return
+
+    sound_to_play = random.choice(AVAILABLE_FIRE_WHOOSH_SOUNDS)
+    try:
+        winsound.PlaySound(sound_to_play, winsound.SND_FILENAME | winsound.SND_ASYNC)
+    except Exception as ex:
+        log_bridge(f"[Audio] Error playing sound: {ex}")
 
 
 async def ble_receiver_worker(config: dict):
@@ -63,6 +84,7 @@ async def ble_receiver_worker(config: dict):
 
                     if card_message:
                         write_tarot_ipc_file(card_message, target_file=TAROT_IPC_FILE, base_dir=script_dir)
+                        play_fire_whoosh_sound()
 
                 if tx_char:
                     log_bridge(f"[BLE Receiver] Subscribing to notifications on TX characteristic: {tx_char.uuid}")

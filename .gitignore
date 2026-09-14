@@ -19,3 +19,6 @@ save2/
 # Ignore runtime logs and IPC files
 *.log
 tarot_command.txt
+
+# Ignore audio files
+*.wav
