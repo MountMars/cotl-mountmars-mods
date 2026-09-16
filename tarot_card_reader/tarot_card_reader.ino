@@ -10,13 +10,17 @@ MOSI     GPIO 23      SPI Master Out / Slave In
 SCK      GPIO 18      SPI Clock
 SDA (SS) GPIO 21      SPI Chip Select
 
-
+WS2812B NeoPixel Ring (24 LEDs):
+VCC      5V / VIN     Power supply (5V - do NOT use 3.3V)
+GND      GND          Ground
+DI       GPIO 4       Data input pin (D4)
 */
 
 #include <SPI.h>
 #include <MFRC522.h>
 #include <map>
 #include "ble_manager.h"
+#include "led_manager.h"
 
 // Mapping of card text -> BLE message value
 static const std::map<String, String> cardMap = {
@@ -89,10 +93,12 @@ String readUltralightText() {
 
 void setup() {
   Serial.begin(115200);
-  SPI.begin();       // Initialize SPI bus
-  rfid.PCD_Init();   // Initialize MFRC522 reader
+  led_init();                    // Initialize NeoPixel LED ring and clear boot noise immediately
   
-  ble_init("TAROT_READER"); // Initialize BLE UART
+  SPI.begin(18, 19, 23, SS_PIN); // Initialize SPI bus with explicit pins (SCK, MISO, MOSI, SS)
+  rfid.PCD_Init();               // Initialize MFRC522 reader
+  
+  ble_init("TAROT_READER");      // Initialize BLE UART
 
   Serial.println("\nScan an RFID card or key fob...");
 }
@@ -137,6 +143,7 @@ void loop() {
       Serial.print("Mapped BLE Value: ");
       Serial.println(it->second);
       ble_send_message(it->second);
+      led_play_card_animation();
     } else {
       Serial.println("Card text not found in map, not sending via BLE.");
     }

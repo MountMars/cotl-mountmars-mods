@@ -53,8 +53,9 @@ An ESP32-based physical RFID/NFC Tarot card reader firmware for interactive phys
 - **(Optional) Hardware Tarot Card Reader**:
   - ESP32 Development Board
   - MFRC522 RFID / NFC Reader module
+  - WS2812B NeoPixel LED Ring (24 LEDs, DI on GPIO 4)
   - MIFARE Ultralight / NTAG NFC cards or stickers
-  - Arduino IDE with ESP32 board support and the `MFRC522` library
+  - Arduino IDE with ESP32 board support, `MFRC522`, and `Adafruit NeoPixel` libraries
 
 ---
 
@@ -69,7 +70,7 @@ An ESP32-based physical RFID/NFC Tarot card reader firmware for interactive phys
 
 2. **(Optional) Flash the Tarot Card Reader:**
    - Open `tarot_card_reader/tarot_card_reader.ino` in Arduino IDE or PlatformIO.
-   - Install the `MFRC522` library via Library Manager.
+   - Install the `MFRC522` and `Adafruit NeoPixel` libraries via Library Manager.
    - Select your ESP32 board and upload the sketch.
    - Once powered, the ESP32 will advertise as `TAROT_READER`.
 
