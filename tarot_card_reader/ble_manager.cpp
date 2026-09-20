@@ -17,7 +17,7 @@ static bool deviceConnected = false;
 class ServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) override {
         deviceConnected = true;
-        Serial.println("[BLE] Client connected.");
+        // Serial.println("[BLE] Client connected.");
     }
 
     void onDisconnect(BLEServer* pServer) override {
