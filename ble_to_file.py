@@ -24,6 +24,7 @@ FIRE_WHOOSH_SOUNDS = [
     os.path.join(SCRIPT_DIR, "3 fire whoosh.wav"),
 ]
 AVAILABLE_FIRE_WHOOSH_SOUNDS = [path for path in FIRE_WHOOSH_SOUNDS if os.path.isfile(path)]
+SPIDER_WARNING_SOUND = os.path.join(SCRIPT_DIR, "Spider Warning.wav")
 
 
 def play_fire_whoosh_sound():
@@ -33,6 +34,17 @@ def play_fire_whoosh_sound():
     sound_to_play = random.choice(AVAILABLE_FIRE_WHOOSH_SOUNDS)
     try:
         winsound.PlaySound(sound_to_play, winsound.SND_FILENAME | winsound.SND_ASYNC)
+    except Exception as ex:
+        log_bridge(f"[Audio] Error playing sound: {ex}")
+
+
+def play_spider_warning_sound():
+    if not os.path.isfile(SPIDER_WARNING_SOUND):
+        log_bridge(f"[Audio] Spider warning sound not found at '{SPIDER_WARNING_SOUND}'")
+        return
+
+    try:
+        winsound.PlaySound(SPIDER_WARNING_SOUND, winsound.SND_FILENAME | winsound.SND_ASYNC)
     except Exception as ex:
         log_bridge(f"[Audio] Error playing sound: {ex}")
 
@@ -84,7 +96,10 @@ async def ble_receiver_worker(config: dict):
 
                     if card_message:
                         write_tarot_ipc_file(card_message, target_file=TAROT_IPC_FILE, base_dir=script_dir)
-                        play_fire_whoosh_sound()
+                        if card_message.strip().lower() in ("increaseddamage", "33", "spider", "8") or raw_text.strip().lower() in ("increaseddamage", "spider"):
+                            play_spider_warning_sound()
+                        else:
+                            play_fire_whoosh_sound()
 
                 if tx_char:
                     log_bridge(f"[BLE Receiver] Subscribing to notifications on TX characteristic: {tx_char.uuid}")

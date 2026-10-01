@@ -59,10 +59,10 @@ TrinketManager.RemoveTrinket(TarotCards.Card.TheDeal, PlayerFarming.Instance);
 | **5** | `TarotCards.Card.Sun` | `Sun` | Base Game | 0 | **All Seeing Sun**: Deal +15% weapon damage during daytime. |
 | **6** | `TarotCards.Card.Moon` | `Moon` | Base Game | 0 | **The Moon**: Deal +15% weapon damage during nighttime. |
 | **7** | `TarotCards.Card.GiftFromBelow` | `GiftFromBelow` | Base Game (Default) | 1 | **Gift from Below**: +10% (Lv 1: +15%) chance to gain a diseased / black heart when taking damage or killing enemies. |
-| **8** | `TarotCards.Card.Spider` | `Spider` | Base Game (Default) | 0 | **The Spider**: Gain bonus damage or hearts against poisoned foes. |
+| **8** | `TarotCards.Card.Spider` | `Spider` | Base Game (Default) | 0 | **The Arachnid**: Deals poison damage to enemies struck. (no + or ++) |
 | **9** | `TarotCards.Card.DiseasedHeart` | `DiseasedHeart` | Base Game (Default) | 0 | **Diseased Heart**: Gain 1 diseased heart. Damages all enemies on screen when hurt. |
 | **10** | `TarotCards.Card.EyeOfWeakness` | `EyeOfWeakness` | Base Game (Default) | 0 | **The Eye of Weakness**: Deal +25% increased damage to bosses and elite foes. |
-| **11** | `TarotCards.Card.Arrows` | `Arrows` | Base Game | 0 | **Master of the Art**: Fires additional projectiles or boosts ranged weapon damage. |
+| **11** | `TarotCards.Card.Arrows` | `Arrows` | Base Game | 0 | **Fervour's Host**: Fervour replenishes fully when entering a new combat room. |
 | **12** | `TarotCards.Card.DeathsDoor` | `DeathsDoor` | Base Game (Default) | 2 | **Death's Door**: When reduced to 1/2 heart, deal 2x (Lv 1: 2.5x, Lv 2: 3x) damage. |
 | **13** | `TarotCards.Card.TheDeal` | `TheDeal` | Base Game | 0 | **The Deal**: Resurrect with 1 red heart upon fatal damage. |
 | **14** | `TarotCards.Card.Telescope` | `Telescope` | Base Game (Default) | 0 | **The Telescope**: Reveals unknown paths and room nodes across the crusade map. |
@@ -84,7 +84,7 @@ TrinketManager.RemoveTrinket(TarotCards.Card.TheDeal, PlayerFarming.Instance);
 | **30** | `TarotCards.Card.MegaSlash` | `MegaSlash` | Base Game | 0 | **Mega Slash**: Weapon attacks cast oversized sweeping shockwaves. |
 | **31** | `TarotCards.Card.MovementSpeed` | `MovementSpeed` | Base Game | 2 | **The Path**: Increases base player movement speed by +1.25x (Lv 1: +1.35x, Lv 2: +1.5x). |
 | **32** | `TarotCards.Card.AttackRate` | `AttackRate` | Base Game (Default) | 2 | **Divine Strength**: Increases weapon attack rate by +1.25x (Lv 1: +1.35x, Lv 2: +1.5x). |
-| **33** | `TarotCards.Card.IncreasedDamage` | `IncreasedDamage` | Base Game (Default) | 1 | **The Arachnid**: Increases weapon damage by +10% (Lv 1: +20%). |
+| **33** | `TarotCards.Card.IncreasedDamage` | `IncreasedDamage` | Base Game (Default) | 1 | **Master of the Art**: Increases overall weapon damage by 1.2x (Lv 1: 1.5x). |
 | **34** | `TarotCards.Card.IncreaseBlackSoulsDrop` | `IncreaseBlackSoulsDrop` | Base Game (Default) | 1 | **Soul Harvest**: Increases Fervour / black soul drops from defeated enemies. |
 | **35** | `TarotCards.Card.HealChance` | `HealChance` | Base Game | 1 | **True Love**: +10% (Lv 1: +20%) chance to heal 1/2 heart when clearing a combat room. |
 | **36** | `TarotCards.Card.NegateDamageChance` | `NegateDamageChance` | Base Game (Default) | 1 | **The Shield**: +10% (Lv 1: +20%) chance to completely negate incoming damage. |

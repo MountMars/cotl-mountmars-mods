@@ -57,11 +57,19 @@ namespace COTLTarotCardReceiver
             {
                 commandFilePath = Path.Combine(Paths.PluginPath, "tarot_command.txt");
                 queueFilePath = Path.Combine(Paths.PluginPath, "tarot_queue.txt");
+                if (File.Exists(commandFilePath)) File.Delete(commandFilePath);
+                if (File.Exists(queueFilePath)) File.Delete(queueFilePath);
             }
             catch
             {
                 commandFilePath = "tarot_command.txt";
                 queueFilePath = "tarot_queue.txt";
+                try
+                {
+                    if (File.Exists(commandFilePath)) File.Delete(commandFilePath);
+                    if (File.Exists(queueFilePath)) File.Delete(queueFilePath);
+                }
+                catch { }
             }
 
             try
@@ -187,6 +195,13 @@ namespace COTLTarotCardReceiver
             {
                 hasLoggedReady = true;
                 Log.LogInfo("[TarotCardReceiver] Active in-game! Ready to receive cards via File IPC.");
+
+                // Discard any stale command files from before save load
+                try { if (!string.IsNullOrEmpty(commandFilePath) && File.Exists(commandFilePath)) File.Delete(commandFilePath); } catch { }
+                try { if (!string.IsNullOrEmpty(queueFilePath) && File.Exists(queueFilePath)) File.Delete(queueFilePath); } catch { }
+                while (PendingCardsToShow.TryDequeue(out _)) { }
+                while (ClauneckQueue.TryDequeue(out _)) { }
+                return;
             }
 
             // 0. Process File-based IPC (100% immune to Windows/Avast firewall or socket issues)
@@ -237,6 +252,12 @@ namespace COTLTarotCardReceiver
         private void Update()
         {
             TickInGame();
+
+            if (Input.GetKeyDown(KeyCode.F9))
+            {
+                Log?.LogInfo("[TarotCardReceiver] F9 pressed: testing Neptune's Curse fish storm!");
+                NeptunesCurseFishStorm.Trigger();
+            }
         }
 
         public static void ShowCardBanner(TarotCards.Card cardType)
@@ -518,6 +539,12 @@ namespace COTLTarotCardReceiver
             {
                 CloseClauneckBark();
                 Log.LogInfo($"[TarotCardReceiver] Presenting Tarot card: {cardType}");
+
+                if (cardType == TarotCards.Card.NeptunesCurse)
+                {
+                    NeptunesCurseFishStorm.Trigger();
+                }
+
                 TarotCards.TarotCard card = new TarotCards.TarotCard(cardType, 0);
                 LastPresentedCard = card;
                 IsCardPresented = true;
@@ -582,6 +609,11 @@ namespace COTLTarotCardReceiver
                 var clauneck = CurrentActiveClauneck;
                 var shrine = CurrentActiveShrine;
                 var shrinePlayer = CurrentShrinePlayer;
+
+                if (chosenCard != null && chosenCard.CardType == TarotCards.Card.NeptunesCurse)
+                {
+                    NeptunesCurseFishStorm.Trigger();
+                }
 
                 ResetRitualState();
 

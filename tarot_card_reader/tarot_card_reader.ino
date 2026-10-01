@@ -32,7 +32,8 @@ static const std::map<String, String> cardMap = {
   {"Fervour's Harvest", "IncreaseBlackSoulsDrop"},
   {"Rabbit's Foot", "RabbitFoot"},
   {"The Lovers II", "Lovers2"},
-  {"Neptune's Curse", "NeptunesCurse"}
+  {"Neptune's Curse", "NeptunesCurse"},
+  {"The Arachnid", "Spider"}
 };
 
 #define SS_PIN  21  // SDA pin on RC522
@@ -137,6 +138,7 @@ void loop() {
 
   // Read and print clean text payload from card memory
   String cardText = readUltralightText();
+  cardText.trim();
   if (cardText.length() > 0) {
     Serial.print("Card Text: ");
     Serial.println(cardText);
