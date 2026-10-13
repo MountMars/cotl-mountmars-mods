@@ -41,7 +41,7 @@ namespace COTLFollowerPoopWatcher
                 string logMessage = $"[POOP] {followerName}: {actionDetail}";
                 Log?.LogInfo(logMessage);
 
-                string payload = $"{followerName}: {actionDetail}\n";
+                string payload = $"[POOP] {followerName}: {actionDetail}\n";
                 UdpMessenger.Send(payload, Log);
             }
             catch (Exception ex)

@@ -1,4 +1,9 @@
 import asyncio
+import os
+try:
+    import winsound
+except ImportError:
+    winsound = None
 from bleak import BleakClient
 from bleak.exc import BleakError
 
@@ -12,6 +17,34 @@ from bridge_common import (
     find_ble_device,
     resolve_rx_characteristic,
 )
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+POOP_GROAN_SOUND = os.path.join(SCRIPT_DIR, "turd.wav")
+
+
+def is_poop_message(message: str) -> bool:
+    """Checks whether the incoming message is a poop/restroom event."""
+    if not message:
+        return False
+    upper = message.upper()
+    return "[POOP]" in upper or "POOP" in upper or "OUTHOUSE" in upper
+
+
+def play_poop_groan_sound():
+    """Plays the poop groan sound effect asynchronously."""
+    if winsound is None:
+        log_bridge("[Audio] winsound is unavailable on this platform.")
+        return
+
+    if not os.path.isfile(POOP_GROAN_SOUND):
+        log_bridge(f"[Audio] Poop groan sound not found at '{POOP_GROAN_SOUND}'")
+        return
+
+    try:
+        winsound.PlaySound(POOP_GROAN_SOUND, winsound.SND_FILENAME | winsound.SND_ASYNC)
+    except Exception as ex:
+        log_bridge(f"[Audio] Error playing sound: {ex}")
+
 
 
 class UdpServerProtocol(asyncio.DatagramProtocol):
@@ -90,6 +123,9 @@ async def ble_sender_worker(message_queue: asyncio.Queue, config: dict):
                     except Exception as e:
                         log_bridge(f"[BLE Sender] Error writing to characteristic: {e}")
                         break
+
+                    if is_poop_message(message):
+                        play_poop_groan_sound()
 
         except (BleakError, asyncio.TimeoutError, Exception) as ex:
             log_bridge(f"[BLE Sender] Connection error: {ex}. Retrying in 3s...")
