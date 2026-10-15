@@ -8,6 +8,8 @@ void led_init() {
   pixels.setBrightness(LED_BRIGHTNESS);
   pixels.clear();
   pixels.show();
+  // Quick startup test animation to visually verify power, wiring, and GPIO pin connection on boot
+  led_animation_quad_spin();
 }
 
 void led_clear() {

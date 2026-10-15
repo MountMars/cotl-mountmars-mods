@@ -33,7 +33,8 @@ static const std::map<String, String> cardMap = {
   {"Rabbit's Foot", "RabbitFoot"},
   {"The Lovers II", "Lovers2"},
   {"Neptune's Curse", "NeptunesCurse"},
-  {"The Arachnid", "Spider"}
+  {"The Arachnid", "Spider"},
+  {"The Reaching Tree", "AdventureMapFreedom"}
 };
 
 #define SS_PIN  21  // SDA pin on RC522
