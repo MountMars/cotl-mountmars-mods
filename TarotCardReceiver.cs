@@ -13,11 +13,21 @@ using UnityEngine;
 
 namespace COTLTarotCardReceiver
 {
+    public enum PlayerForm
+    {
+        Default,
+        Lamb,
+        Goat,
+        Owl,
+        Snake
+    }
+
     [BepInPlugin("com.mountmars.cotl.tarotcardreceiver", "Tarot Card Receiver", "1.0.0")]
     public class TarotCardReceiverPlugin : BaseUnityPlugin
     {
         public static ManualLogSource Log;
         public static TarotCards.Card CurrentTestCard = TarotCards.Card.TheDeal;
+        public static PlayerForm CurrentPlayerForm = PlayerForm.Default;
 
         // Thread-safe queue for outside-Clauneck banner preview
         public static readonly ConcurrentQueue<TarotCards.Card> PendingCardsToShow = new ConcurrentQueue<TarotCards.Card>();
@@ -150,8 +160,157 @@ namespace COTLTarotCardReceiver
             return false;
         }
 
+        public static bool TryParseForm(string raw, out PlayerForm form)
+        {
+            form = PlayerForm.Default;
+            if (string.IsNullOrWhiteSpace(raw)) return false;
+
+            string cleaned = raw.Trim().Trim('\0', '\r', '\n', ' ', '\t', '"', '\'');
+
+            // 1. JSON payload support: {"form": "owl"}
+            if (cleaned.StartsWith("{") && cleaned.EndsWith("}"))
+            {
+                var match = Regex.Match(cleaned, "\"form\"\\s*:\\s*\"?([^\",}]+)\"?", RegexOptions.IgnoreCase);
+                if (!match.Success)
+                    match = Regex.Match(cleaned, "\"character\"\\s*:\\s*\"?([^\",}]+)\"?", RegexOptions.IgnoreCase);
+                if (!match.Success)
+                    match = Regex.Match(cleaned, "\"skin\"\\s*:\\s*\"?([^\",}]+)\"?", RegexOptions.IgnoreCase);
+
+                if (match.Success)
+                {
+                    cleaned = match.Groups[1].Value.Trim().Trim('\0', '\r', '\n', ' ', '\t', '"', '\'');
+                }
+            }
+
+            // 2. Strip prefix: "form:", "form=", "form ", "form-", "skin:", "character:"
+            if (cleaned.StartsWith("form:", StringComparison.OrdinalIgnoreCase)) cleaned = cleaned.Substring(5).Trim();
+            else if (cleaned.StartsWith("form=", StringComparison.OrdinalIgnoreCase)) cleaned = cleaned.Substring(5).Trim();
+            else if (cleaned.StartsWith("form ", StringComparison.OrdinalIgnoreCase)) cleaned = cleaned.Substring(5).Trim();
+            else if (cleaned.StartsWith("form-", StringComparison.OrdinalIgnoreCase)) cleaned = cleaned.Substring(5).Trim();
+            else if (cleaned.StartsWith("form/", StringComparison.OrdinalIgnoreCase)) cleaned = cleaned.Substring(5).Trim();
+            else if (cleaned.StartsWith("skin:", StringComparison.OrdinalIgnoreCase)) cleaned = cleaned.Substring(5).Trim();
+            else if (cleaned.StartsWith("character:", StringComparison.OrdinalIgnoreCase)) cleaned = cleaned.Substring(10).Trim();
+
+            cleaned = cleaned.Trim().ToLowerInvariant();
+
+            switch (cleaned)
+            {
+                case "owl":
+                    form = PlayerForm.Owl;
+                    return true;
+                case "snake":
+                    form = PlayerForm.Snake;
+                    return true;
+                case "goat":
+                    form = PlayerForm.Goat;
+                    return true;
+                case "lamb":
+                    form = PlayerForm.Lamb;
+                    return true;
+                case "default":
+                case "reset":
+                    form = PlayerForm.Default;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        public static bool TryProcessFormCommand(string candidate, string source)
+        {
+            if (TryParseForm(candidate, out var form))
+            {
+                Log.LogInfo($"[TarotCardReceiver] Form command received via {source}: {form}");
+                SetPlayerForm(form);
+                return true;
+            }
+            return false;
+        }
+
+        public static void SetPlayerForm(PlayerForm form)
+        {
+            CurrentPlayerForm = form;
+            Log.LogInfo($"[TarotCardReceiver] Setting player form to: {form}");
+
+            var players = PlayerFarming.players;
+            if (players != null && players.Count > 0)
+            {
+                foreach (var player in players)
+                {
+                    if (player != null)
+                    {
+                        ApplyFormToPlayer(player, form);
+                    }
+                }
+            }
+            else if (PlayerFarming.Instance != null)
+            {
+                ApplyFormToPlayer(PlayerFarming.Instance, form);
+            }
+
+            ShowNotification($"Player Form: {form}");
+        }
+
+        public static void ApplyFormToPlayer(PlayerFarming player, PlayerForm form)
+        {
+            if (player == null) return;
+
+            if (form == PlayerForm.Goat)
+            {
+                player.IsGoat = true;
+                player.isLamb = false;
+            }
+            else if (form == PlayerForm.Lamb)
+            {
+                player.IsGoat = false;
+                player.isLamb = true;
+            }
+            else if (form == PlayerForm.Owl || form == PlayerForm.Snake)
+            {
+                player.IsGoat = false;
+                player.isLamb = true;
+            }
+            else // Default
+            {
+                player.IsGoat = (player.playerID != 0) || (DataManager.Instance != null && DataManager.Instance.PlayerVisualFleece == 1003);
+                player.isLamb = (player.playerID == 0);
+            }
+
+            player.SetSkin();
+        }
+
+        public static void CyclePlayerForm()
+        {
+            PlayerForm nextForm;
+            switch (CurrentPlayerForm)
+            {
+                case PlayerForm.Default:
+                case PlayerForm.Lamb:
+                    nextForm = PlayerForm.Goat;
+                    break;
+                case PlayerForm.Goat:
+                    nextForm = PlayerForm.Owl;
+                    break;
+                case PlayerForm.Owl:
+                    nextForm = PlayerForm.Snake;
+                    break;
+                case PlayerForm.Snake:
+                    nextForm = PlayerForm.Lamb;
+                    break;
+                default:
+                    nextForm = PlayerForm.Lamb;
+                    break;
+            }
+            SetPlayerForm(nextForm);
+        }
+
         public static void ProcessIncomingCard(string candidate, string source)
         {
+            if (TryProcessFormCommand(candidate, source))
+            {
+                return;
+            }
+
             if (TryParseCard(candidate, out var card))
             {
                 // Deduplicate if exact same card arrived within 1.0s (e.g. from simultaneous UDP + HTTP / fast repeat)
@@ -257,6 +416,12 @@ namespace COTLTarotCardReceiver
             {
                 Log?.LogInfo("[TarotCardReceiver] F9 pressed: testing Neptune's Curse fish storm!");
                 NeptunesCurseFishStorm.Trigger();
+            }
+
+            if (Input.GetKeyDown(KeyCode.F10))
+            {
+                Log?.LogInfo("[TarotCardReceiver] F10 pressed: cycling player form!");
+                CyclePlayerForm();
             }
         }
 
@@ -831,6 +996,208 @@ namespace COTLTarotCardReceiver
                 TarotCardReceiverPlugin.Log?.LogWarning($"[TarotCardReceiver] Error in MMConversation.UpdateText patch: {ex.Message}");
             }
             return true;
+        }
+    }
+
+    // Override PlayerFarming skin to support Owl, Snake, Goat, and Lamb dynamically
+    [HarmonyPatch(typeof(PlayerFarming), "SetSkin", new Type[] { typeof(bool) })]
+    public static class PlayerFarming_SetSkin_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(PlayerFarming __instance, bool BlackAndWhite, ref Spine.Skin __result)
+        {
+            if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Default)
+            {
+                return true;
+            }
+
+            try
+            {
+                if (__instance.playerID != 0)
+                {
+                    __instance.IsGoat = true;
+                }
+                else
+                {
+                    if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Goat)
+                        __instance.IsGoat = true;
+                    else if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Lamb)
+                        __instance.IsGoat = (DataManager.Instance != null && DataManager.Instance.PlayerVisualFleece == 1003);
+                    else
+                        __instance.IsGoat = false;
+                }
+
+                Spine.Skin playerSkin = new Spine.Skin("Player Skin");
+                Traverse.Create(__instance).Field("PlayerSkin").SetValue(playerSkin);
+
+                Spine.Skin characterSkin = null;
+                if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Owl)
+                {
+                    characterSkin = __instance.Spine.Skeleton.Data.FindSkin("Owl");
+                    if (characterSkin != null)
+                    {
+                        playerSkin.AddSkin(characterSkin);
+
+                        // Fix missing directional frames in Owl skin left pointing to Lamb by game developers:
+                        int headBackSlot = __instance.Spine.Skeleton.Data.FindSlotIndex("images/HeadBack");
+                        if (headBackSlot >= 0)
+                        {
+                            var owlHeadBack = characterSkin.GetAttachment(headBackSlot, "HeadBack");
+                            if (owlHeadBack != null)
+                            {
+                                playerSkin.SetAttachment(headBackSlot, "HeadBackDown", owlHeadBack);
+                                playerSkin.SetAttachment(headBackSlot, "HeadBackDown_RITUAL", owlHeadBack);
+                                playerSkin.SetAttachment(headBackSlot, "HeadBackDown_SERMON", owlHeadBack);
+                                playerSkin.SetAttachment(headBackSlot, "HeadBack_Static1", owlHeadBack);
+                                playerSkin.SetAttachment(headBackSlot, "HeadBack_Static2", owlHeadBack);
+                            }
+                        }
+
+                        int eyeLeftSlot = __instance.Spine.Skeleton.Data.FindSlotIndex("EYE_LEFT");
+                        if (eyeLeftSlot >= 0)
+                        {
+                            var owlEye = characterSkin.GetAttachment(eyeLeftSlot, "EYE_ANGRY_LEFT")
+                                         ?? characterSkin.GetAttachment(eyeLeftSlot, "EYE");
+                            if (owlEye != null)
+                            {
+                                playerSkin.SetAttachment(eyeLeftSlot, "EYE_DETERMINED_DOWN_LEFT", owlEye);
+                                playerSkin.SetAttachment(eyeLeftSlot, "EYE_DOWN", owlEye);
+                                playerSkin.SetAttachment(eyeLeftSlot, "EYE_UP", owlEye);
+                            }
+                        }
+
+                        int eyeRightSlot = __instance.Spine.Skeleton.Data.FindSlotIndex("EYE_RIGHT");
+                        if (eyeRightSlot >= 0)
+                        {
+                            var owlEye = characterSkin.GetAttachment(eyeRightSlot, "EYE_ANGRY_RIGHT")
+                                         ?? characterSkin.GetAttachment(eyeRightSlot, "EYE");
+                            if (owlEye != null)
+                            {
+                                playerSkin.SetAttachment(eyeRightSlot, "EYE_DETERMINED_DOWN_RIGHT", owlEye);
+                                playerSkin.SetAttachment(eyeRightSlot, "EYE_DOWN", owlEye);
+                                playerSkin.SetAttachment(eyeRightSlot, "EYE_UP", owlEye);
+                            }
+                        }
+                    }
+                }
+                else if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Snake)
+                {
+                    characterSkin = __instance.Spine.Skeleton.Data.FindSkin("Snake");
+                    if (characterSkin != null)
+                    {
+                        playerSkin.AddSkin(characterSkin);
+
+                        // Fix downward eyes in Snake
+                        int eyeLeftSlot = __instance.Spine.Skeleton.Data.FindSlotIndex("EYE_LEFT");
+                        if (eyeLeftSlot >= 0)
+                        {
+                            var snakeEye = characterSkin.GetAttachment(eyeLeftSlot, "EYE_ANGRY_LEFT")
+                                           ?? characterSkin.GetAttachment(eyeLeftSlot, "EYE");
+                            if (snakeEye != null)
+                            {
+                                playerSkin.SetAttachment(eyeLeftSlot, "EYE_DETERMINED_DOWN_LEFT", snakeEye);
+                                playerSkin.SetAttachment(eyeLeftSlot, "EYE_DOWN", snakeEye);
+                                playerSkin.SetAttachment(eyeLeftSlot, "EYE_UP", snakeEye);
+                            }
+                        }
+
+                        int eyeRightSlot = __instance.Spine.Skeleton.Data.FindSlotIndex("EYE_RIGHT");
+                        if (eyeRightSlot >= 0)
+                        {
+                            var snakeEye = characterSkin.GetAttachment(eyeRightSlot, "EYE_ANGRY_RIGHT")
+                                           ?? characterSkin.GetAttachment(eyeRightSlot, "EYE");
+                            if (snakeEye != null)
+                            {
+                                playerSkin.SetAttachment(eyeRightSlot, "EYE_DETERMINED_DOWN_RIGHT", snakeEye);
+                                playerSkin.SetAttachment(eyeRightSlot, "EYE_DOWN", snakeEye);
+                                playerSkin.SetAttachment(eyeRightSlot, "EYE_UP", snakeEye);
+                            }
+                        }
+                    }
+                }
+                else if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Goat || __instance.IsGoat)
+                {
+                    characterSkin = __instance.Spine.Skeleton.Data.FindSkin("Goat");
+                    if (characterSkin != null) playerSkin.AddSkin(characterSkin);
+                }
+                else // Lamb
+                {
+                    int visualFleece = (DataManager.Instance != null) ? DataManager.Instance.PlayerVisualFleece : 0;
+                    string suffix = visualFleece.ToString() + (BlackAndWhite ? "_BW" : "");
+                    characterSkin = __instance.Spine.Skeleton.Data.FindSkin("Lamb_" + suffix)
+                                    ?? __instance.Spine.Skeleton.Data.FindSkin("Lamb");
+                    if (characterSkin != null) playerSkin.AddSkin(characterSkin);
+                }
+
+                // Weapon Skin
+                string weaponName = "Normal";
+                if (__instance.currentWeapon != EquipmentType.None)
+                {
+                    var weaponData = EquipmentManager.GetWeaponData(__instance.currentWeapon);
+                    if (weaponData != null)
+                    {
+                        weaponName = weaponData.ToString();
+                    }
+                }
+                var weaponSkin = __instance.Spine.Skeleton.Data.FindSkin("Weapons/" + weaponName);
+                if (weaponSkin != null)
+                {
+                    playerSkin.AddSkin(weaponSkin);
+                }
+
+                // Hurt Skin in Dungeon
+                if (LocationManager.IsDungeonActive() && __instance.health != null)
+                {
+                    var healthPlayer = __instance.health as HealthPlayer;
+                    float totalHealth = healthPlayer != null ? healthPlayer.PLAYER_TOTAL_HEALTH : 6f;
+                    float currentHealth = __instance.health.CurrentHP;
+                    if (currentHealth <= totalHealth * 0.25f)
+                    {
+                        string hurtSkinName = __instance.IsGoat ? "Goat_Hurt2" : "Hurt2";
+                        var hurtSkin = __instance.Spine.Skeleton.Data.FindSkin(hurtSkinName);
+                        if (hurtSkin != null) playerSkin.AddSkin(hurtSkin);
+                    }
+                    else if (currentHealth <= totalHealth * 0.5f)
+                    {
+                        string hurtSkinName = __instance.IsGoat ? "Goat_Hurt1" : "Hurt1";
+                        var hurtSkin = __instance.Spine.Skeleton.Data.FindSkin(hurtSkinName);
+                        if (hurtSkin != null) playerSkin.AddSkin(hurtSkin);
+                    }
+                }
+
+                // Mop Skin
+                int choreLevel = (DataManager.Instance != null)
+                    ? (__instance.isLamb ? DataManager.Instance.ChoreXPLevel : DataManager.Instance.ChoreXPLevel_Coop) + 1
+                    : 1;
+                int clampedLevel = Mathf.Clamp(choreLevel, 1, 10);
+                var mopSkin = __instance.Spine.Skeleton.Data.FindSkin("Mops/" + clampedLevel);
+                if (mopSkin != null)
+                {
+                    playerSkin.AddSkin(mopSkin);
+                }
+
+                // Apply to skeleton
+                __instance.Spine.Skeleton.SetSkin(playerSkin);
+                __instance.Spine.Skeleton.SetSlotsToSetupPose();
+
+                // Clear Lamb ear attachments when using Owl or Snake form
+                if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Owl ||
+                    TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Snake)
+                {
+                    var earLeft = __instance.Spine.Skeleton.FindSlot("EAR_LEFT");
+                    if (earLeft != null) earLeft.Attachment = null;
+                    var earRight = __instance.Spine.Skeleton.FindSlot("EAR_RIGHT");
+                    if (earRight != null) earRight.Attachment = null;
+                }
+
+                __result = playerSkin;
+                return false;
+            }
+            catch (Exception ex)
+            {
+                TarotCardReceiverPlugin.Log?.LogError($"[TarotCardReceiver] Error in PlayerFarming_SetSkin_Patch: {ex.Message}\n{ex.StackTrace}");
+                return true;
+            }
         }
     }
 }

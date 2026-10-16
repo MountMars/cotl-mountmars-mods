@@ -16,29 +16,32 @@ GND      GND          Ground
 DI       GPIO 4       Data input pin (D4)
 */
 
-#include <SPI.h>
-#include <MFRC522.h>
-#include <map>
 #include "ble_manager.h"
 #include "led_manager.h"
+#include <MFRC522.h>
+#include <SPI.h>
+#include <map>
 
 // Mapping of card text -> BLE message value
 static const std::map<String, String> cardMap = {
-  {"Temptation's Fate", "Sin"},
-  {"The Hearts III", "Hearts3"},
-  {"The Bomb", "BombOnRoll"},
-  {"Devine Strength", "AttackRate"},
-  {"Telescope", "Telescope"},
-  {"Fervour's Harvest", "IncreaseBlackSoulsDrop"},
-  {"Rabbit's Foot", "RabbitFoot"},
-  {"The Lovers II", "Lovers2"},
-  {"Neptune's Curse", "NeptunesCurse"},
-  {"The Arachnid", "Spider"},
-  {"The Reaching Tree", "AdventureMapFreedom"}
-};
+    {"Temptation's Fate", "Sin"},
+    {"The Hearts III", "Hearts3"},
+    {"The Bomb", "BombOnRoll"},
+    {"Devine Strength", "AttackRate"},
+    {"Telescope", "Telescope"},
+    {"Fervour's Harvest", "IncreaseBlackSoulsDrop"},
+    {"Rabbit's Foot", "RabbitFoot"},
+    {"The Lovers II", "Lovers2"},
+    {"Neptune's Curse", "NeptunesCurse"},
+    {"The Arachnid", "Spider"},
+    {"The Reaching Tree", "AdventureMapFreedom"},
+    {"form:owl", "form:owl"},
+    {"form:goat", "form:goat"},
+    {"form:snake", "form:snake"},
+    {"form:lamb", "form:lamb"}};
 
-#define SS_PIN  21  // SDA pin on RC522
-#define RST_PIN 22  // RST pin on RC522
+#define SS_PIN 21  // SDA pin on RC522
+#define RST_PIN 22 // RST pin on RC522
 
 MFRC522 rfid(SS_PIN, RST_PIN);
 
@@ -61,7 +64,8 @@ String readUltralightText() {
   }
 
   // Find start of text:
-  // Standard NDEF Text records have 'T' (0x54) followed by status byte (with language code length)
+  // Standard NDEF Text records have 'T' (0x54) followed by status byte (with
+  // language code length)
   int textStart = -1;
   for (int i = 0; i < totalBytes - 3; i++) {
     if (data[i] == 0x54) { // 'T'
@@ -98,12 +102,14 @@ String readUltralightText() {
 
 void setup() {
   Serial.begin(115200);
-  led_init();                    // Initialize NeoPixel LED ring and clear boot noise immediately
-  
-  SPI.begin(18, 19, 23, SS_PIN); // Initialize SPI bus with explicit pins (SCK, MISO, MOSI, SS)
-  rfid.PCD_Init();               // Initialize MFRC522 reader
-  
-  ble_init("TAROT_READER");      // Initialize BLE UART
+  led_init(); // Initialize NeoPixel LED ring and clear boot noise immediately
+
+  SPI.begin(
+      18, 19, 23,
+      SS_PIN); // Initialize SPI bus with explicit pins (SCK, MISO, MOSI, SS)
+  rfid.PCD_Init(); // Initialize MFRC522 reader
+
+  ble_init("TAROT_READER"); // Initialize BLE UART
 
   Serial.println("\nScan an RFID card or key fob...");
 }
@@ -122,8 +128,10 @@ void loop() {
   // Format UID as uppercase hex string
   String uidStr = "";
   for (byte i = 0; i < rfid.uid.size; i++) {
-    if (i > 0) uidStr += " ";
-    if (rfid.uid.uidByte[i] < 0x10) uidStr += "0";
+    if (i > 0)
+      uidStr += " ";
+    if (rfid.uid.uidByte[i] < 0x10)
+      uidStr += "0";
     uidStr += String(rfid.uid.uidByte[i], HEX);
   }
   uidStr.toUpperCase();
