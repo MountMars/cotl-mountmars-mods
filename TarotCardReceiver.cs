@@ -10,6 +10,7 @@ using HarmonyLib;
 using Lamb.UI;
 using MMTools;
 using UnityEngine;
+using UnityEngine.Networking;
 
 namespace COTLTarotCardReceiver
 {
@@ -92,6 +93,20 @@ namespace COTLTarotCardReceiver
             {
                 Log.LogError($"Error applying Harmony patches: {ex.Message}");
             }
+
+            try
+            {
+                FormSoundManager.Initialize(this);
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"Error initializing FormSoundManager: {ex.Message}");
+            }
+        }
+
+        private void OnDestroy()
+        {
+            FormSoundManager.ReleaseSounds();
         }
 
         public static bool TryParseCard(string raw, out TarotCards.Card card)
@@ -1236,4 +1251,308 @@ namespace COTLTarotCardReceiver
             }
         }
     }
+
+    // Override PlayerFarming.BleatRoutine to support custom Owl howl and Snake hiss sounds
+    [HarmonyPatch(typeof(PlayerFarming), "BleatRoutine")]
+    public static class PlayerFarming_BleatRoutine_Patch
+    {
+        [HarmonyPrefix]
+        public static bool Prefix(PlayerFarming __instance, ref IEnumerator __result)
+        {
+            if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Owl ||
+                TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Snake)
+            {
+                __result = FormSoundManager.CustomBleatRoutine(__instance, TarotCardReceiverPlugin.CurrentPlayerForm);
+                return false;
+            }
+            return true;
+        }
+    }
+
+    public static class FormSoundManager
+    {
+        private static MonoBehaviour coroutineRunner;
+        private static AudioSource fallbackAudioSource;
+
+        private static FMOD.Sound? owlFmodSound;
+        private static FMOD.Sound? snakeFmodSound;
+
+        private static AudioClip owlAudioClip;
+        private static AudioClip snakeAudioClip;
+
+        private static string owlFilePath;
+        private static string snakeFilePath;
+
+        public static void Initialize(MonoBehaviour runner)
+        {
+            coroutineRunner = runner;
+            owlFilePath = FindSoundFile("owl.mp3");
+            snakeFilePath = FindSoundFile("snake.mp3");
+
+            TarotCardReceiverPlugin.Log?.LogInfo($"[FormSoundManager] Initialized. Owl file: '{owlFilePath}' (exists={File.Exists(owlFilePath)}), Snake file: '{snakeFilePath}' (exists={File.Exists(snakeFilePath)})");
+
+            LoadFmodSounds();
+
+            if (coroutineRunner != null)
+            {
+                if (File.Exists(owlFilePath))
+                    coroutineRunner.StartCoroutine(LoadAudioClipRoutine(owlFilePath, clip => owlAudioClip = clip));
+                if (File.Exists(snakeFilePath))
+                    coroutineRunner.StartCoroutine(LoadAudioClipRoutine(snakeFilePath, clip => snakeAudioClip = clip));
+            }
+        }
+
+        private static string FindSoundFile(string filename)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(Paths.PluginPath))
+                {
+                    string p = Path.Combine(Paths.PluginPath, filename);
+                    if (File.Exists(p)) return p;
+                }
+
+                string asmDir = Path.GetDirectoryName(typeof(TarotCardReceiverPlugin).Assembly.Location);
+                if (!string.IsNullOrEmpty(asmDir))
+                {
+                    string p = Path.Combine(asmDir, filename);
+                    if (File.Exists(p)) return p;
+                }
+
+                string cwd = Directory.GetCurrentDirectory();
+                if (!string.IsNullOrEmpty(cwd))
+                {
+                    string p = Path.Combine(cwd, filename);
+                    if (File.Exists(p)) return p;
+                    string bp = Path.Combine(cwd, "BepInEx", "plugins", filename);
+                    if (File.Exists(bp)) return bp;
+                }
+
+                string hardcoded = Path.Combine(@"C:\Program Files (x86)\Steam\steamapps\common\Cult of the Lamb\BepInEx\plugins", filename);
+                if (File.Exists(hardcoded)) return hardcoded;
+            }
+            catch { }
+
+            return filename;
+        }
+
+        private static void LoadFmodSounds()
+        {
+            try
+            {
+                var core = FMODUnity.RuntimeManager.CoreSystem;
+                if (File.Exists(owlFilePath) && !owlFmodSound.HasValue)
+                {
+                    FMOD.RESULT res = core.createSound(owlFilePath, FMOD.MODE.DEFAULT | FMOD.MODE._2D | FMOD.MODE.LOOP_OFF, out FMOD.Sound s);
+                    if (res == FMOD.RESULT.OK)
+                    {
+                        owlFmodSound = s;
+                        TarotCardReceiverPlugin.Log?.LogInfo($"[FormSoundManager] Preloaded FMOD owl sound from {owlFilePath}");
+                    }
+                    else
+                    {
+                        TarotCardReceiverPlugin.Log?.LogWarning($"[FormSoundManager] Failed to create FMOD sound for owl: {res}");
+                    }
+                }
+
+                if (File.Exists(snakeFilePath) && !snakeFmodSound.HasValue)
+                {
+                    FMOD.RESULT res = core.createSound(snakeFilePath, FMOD.MODE.DEFAULT | FMOD.MODE._2D | FMOD.MODE.LOOP_OFF, out FMOD.Sound s);
+                    if (res == FMOD.RESULT.OK)
+                    {
+                        snakeFmodSound = s;
+                        TarotCardReceiverPlugin.Log?.LogInfo($"[FormSoundManager] Preloaded FMOD snake sound from {snakeFilePath}");
+                    }
+                    else
+                    {
+                        TarotCardReceiverPlugin.Log?.LogWarning($"[FormSoundManager] Failed to create FMOD sound for snake: {res}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                TarotCardReceiverPlugin.Log?.LogWarning($"[FormSoundManager] Error loading FMOD sounds: {ex.Message}");
+            }
+        }
+
+        private static IEnumerator LoadAudioClipRoutine(string path, Action<AudioClip> onLoaded)
+        {
+            if (!File.Exists(path)) yield break;
+            string url = "file:///" + path.Replace("\\", "/");
+            using (UnityWebRequest www = UnityWebRequestMultimedia.GetAudioClip(url, AudioType.MPEG))
+            {
+                yield return www.SendWebRequest();
+                if (www.result == UnityWebRequest.Result.Success)
+                {
+                    AudioClip clip = DownloadHandlerAudioClip.GetContent(www);
+                    if (clip != null)
+                    {
+                        onLoaded?.Invoke(clip);
+                        TarotCardReceiverPlugin.Log?.LogInfo($"[FormSoundManager] Preloaded Unity AudioClip from {path}");
+                    }
+                }
+                else
+                {
+                    TarotCardReceiverPlugin.Log?.LogWarning($"[FormSoundManager] UnityWebRequest failed for {path}: {www.error}");
+                }
+            }
+        }
+
+        public static void PlayOwlSound(PlayerFarming player)
+        {
+            if (!owlFmodSound.HasValue)
+            {
+                LoadFmodSounds();
+            }
+
+            if (owlFmodSound.HasValue)
+            {
+                try
+                {
+                    var core = FMODUnity.RuntimeManager.CoreSystem;
+                    FMOD.RESULT res = core.playSound(owlFmodSound.Value, default(FMOD.ChannelGroup), false, out FMOD.Channel ch);
+                    if (res == FMOD.RESULT.OK)
+                    {
+                        ch.setVolume(1.0f);
+                        return;
+                    }
+                    else
+                    {
+                        TarotCardReceiverPlugin.Log?.LogWarning($"[FormSoundManager] FMOD playSound owl failed: {res}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    TarotCardReceiverPlugin.Log?.LogWarning($"[FormSoundManager] FMOD playSound owl error: {ex.Message}");
+                }
+            }
+
+            if (owlAudioClip != null)
+            {
+                PlayClipOnPlayer(player, owlAudioClip);
+                return;
+            }
+
+            if (AudioManager.Instance != null && player != null)
+            {
+                AudioManager.Instance.PlayOneShot("event:/dlc/dungeon05/enemy/vocals_shared/dog_basic_small/howl", player.gameObject);
+            }
+        }
+
+        public static void PlaySnakeSound(PlayerFarming player)
+        {
+            if (!snakeFmodSound.HasValue)
+            {
+                LoadFmodSounds();
+            }
+
+            if (snakeFmodSound.HasValue)
+            {
+                try
+                {
+                    var core = FMODUnity.RuntimeManager.CoreSystem;
+                    FMOD.RESULT res = core.playSound(snakeFmodSound.Value, default(FMOD.ChannelGroup), false, out FMOD.Channel ch);
+                    if (res == FMOD.RESULT.OK)
+                    {
+                        ch.setVolume(1.0f);
+                        return;
+                    }
+                    else
+                    {
+                        TarotCardReceiverPlugin.Log?.LogWarning($"[FormSoundManager] FMOD playSound snake failed: {res}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    TarotCardReceiverPlugin.Log?.LogWarning($"[FormSoundManager] FMOD playSound snake error: {ex.Message}");
+                }
+            }
+
+            if (snakeAudioClip != null)
+            {
+                PlayClipOnPlayer(player, snakeAudioClip);
+                return;
+            }
+
+            if (AudioManager.Instance != null && player != null)
+            {
+                AudioManager.Instance.PlayOneShot("event:/rituals/snakes_hissing", player.gameObject);
+            }
+        }
+
+        private static void PlayClipOnPlayer(PlayerFarming player, AudioClip clip)
+        {
+            if (clip == null) return;
+            try
+            {
+                GameObject target = (player != null) ? player.gameObject : null;
+                if (target == null && coroutineRunner != null) target = coroutineRunner.gameObject;
+                if (target != null)
+                {
+                    if (fallbackAudioSource == null)
+                    {
+                        fallbackAudioSource = target.GetComponent<AudioSource>();
+                        if (fallbackAudioSource == null) fallbackAudioSource = target.AddComponent<AudioSource>();
+                    }
+                    if (fallbackAudioSource != null)
+                    {
+                        fallbackAudioSource.PlayOneShot(clip, 1.0f);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                TarotCardReceiverPlugin.Log?.LogWarning($"[FormSoundManager] AudioSource error: {ex.Message}");
+            }
+        }
+
+        public static IEnumerator CustomBleatRoutine(PlayerFarming player, PlayerForm form)
+        {
+            if (player == null) yield break;
+
+            player.state.CURRENT_STATE = StateMachine.State.CustomAnimation;
+            yield return null;
+
+            if (player.simpleSpineAnimator != null)
+            {
+                player.simpleSpineAnimator.Animate("bleat", 0, false);
+            }
+
+            float duration = 1.1f;
+            if (form == PlayerForm.Owl)
+            {
+                PlayOwlSound(player);
+            }
+            else if (form == PlayerForm.Snake)
+            {
+                PlaySnakeSound(player);
+            }
+
+            yield return new WaitForSeconds(duration);
+
+            if (player != null && player.state != null && (int)player.state.CURRENT_STATE == 49) // StateMachine.State.CustomAnimation
+            {
+                player.state.CURRENT_STATE = StateMachine.State.Idle;
+            }
+        }
+
+        public static void ReleaseSounds()
+        {
+            try
+            {
+                if (owlFmodSound.HasValue)
+                {
+                    owlFmodSound.Value.release();
+                    owlFmodSound = null;
+                }
+                if (snakeFmodSound.HasValue)
+                {
+                    snakeFmodSound.Value.release();
+                    snakeFmodSound = null;
+                }
+            }
+            catch { }
+        }
+    }
 }
+
