@@ -1136,13 +1136,49 @@ namespace COTLTarotCardReceiver
                     var weaponData = EquipmentManager.GetWeaponData(__instance.currentWeapon);
                     if (weaponData != null)
                     {
-                        weaponName = weaponData.ToString();
+                        weaponName = weaponData.Skin.ToString();
                     }
                 }
                 var weaponSkin = __instance.Spine.Skeleton.Data.FindSkin("Weapons/" + weaponName);
                 if (weaponSkin != null)
                 {
                     playerSkin.AddSkin(weaponSkin);
+                }
+
+                // Fallback missing utility/interaction attachments from Lamb base skin (e.g. Corpse carrying on Snake, heavy weapons, tools)
+                var baseSkin = __instance.Spine.Skeleton.Data.FindSkin("Lamb_0")
+                               ?? __instance.Spine.Skeleton.Data.FindSkin("Lamb");
+                if (baseSkin != null)
+                {
+                    string[] utilitySlots = new string[]
+                    {
+                        "images/Corpse",
+                        "images/Corpse2",
+                        "Weapons/SwordHeavy",
+                        "effects/SpawnHeavy_1",
+                        "effects/SpawnHeavy_glow",
+                        "DRINK",
+                        "CHALICE",
+                        "Items",
+                        "TOOLS",
+                        "BOOK",
+                        "Sick"
+                    };
+
+                    foreach (var slotName in utilitySlots)
+                    {
+                        int slotIndex = __instance.Spine.Skeleton.Data.FindSlotIndex(slotName);
+                        if (slotIndex >= 0)
+                        {
+                            foreach (var entry in baseSkin.Attachments)
+                            {
+                                if (entry.SlotIndex == slotIndex && playerSkin.GetAttachment(slotIndex, entry.Name) == null)
+                                {
+                                    playerSkin.SetAttachment(slotIndex, entry.Name, entry.Attachment);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Hurt Skin in Dungeon
