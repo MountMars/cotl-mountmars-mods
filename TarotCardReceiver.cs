@@ -23,12 +23,26 @@ namespace COTLTarotCardReceiver
         Snake
     }
 
+    public enum TargetPlayerMode
+    {
+        Player1,
+        Player2,
+        Both
+    }
+
     [BepInPlugin("com.mountmars.cotl.tarotcardreceiver", "Tarot Card Receiver", "1.0.0")]
     public class TarotCardReceiverPlugin : BaseUnityPlugin
     {
         public static ManualLogSource Log;
         public static TarotCards.Card CurrentTestCard = TarotCards.Card.TheDeal;
-        public static PlayerForm CurrentPlayerForm = PlayerForm.Default;
+        public static TargetPlayerMode CurrentTargetMode = TargetPlayerMode.Player1;
+        public static PlayerForm Player1Form = PlayerForm.Default;
+        public static PlayerForm Player2Form = PlayerForm.Default;
+        public static PlayerForm CurrentPlayerForm
+        {
+            get => Player1Form;
+            set => Player1Form = value;
+        }
 
         // Thread-safe queue for outside-Clauneck banner preview
         public static readonly ConcurrentQueue<TarotCards.Card> PendingCardsToShow = new ConcurrentQueue<TarotCards.Card>();
@@ -63,6 +77,19 @@ namespace COTLTarotCardReceiver
         {
             Log = Logger;
             Log.LogInfo("Tarot Card Receiver Plugin loaded!");
+
+            try
+            {
+                DontDestroyOnLoad(this.gameObject);
+                var runnerObj = new GameObject("TarotReceiverRunner");
+                runnerObj.AddComponent<TarotReceiverRunner>();
+                DontDestroyOnLoad(runnerObj);
+                Log.LogInfo("[TarotCardReceiver] Created persistent TarotReceiverRunner GameObject.");
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"[TarotCardReceiver] Failed to create TarotReceiverRunner: {ex.Message}");
+            }
 
             try
             {
@@ -231,39 +258,161 @@ namespace COTLTarotCardReceiver
             }
         }
 
+        public static bool TryParseTargetCommand(string raw, out TargetPlayerMode targetMode)
+        {
+            targetMode = TargetPlayerMode.Player1;
+            if (string.IsNullOrWhiteSpace(raw)) return false;
+
+            string cleaned = raw.Trim().Trim('\0', '\r', '\n', ' ', '\t', '"', '\'').ToLowerInvariant();
+
+            if (cleaned.StartsWith("target:", StringComparison.OrdinalIgnoreCase))
+                cleaned = cleaned.Substring(7).Trim();
+            else if (cleaned.StartsWith("target=", StringComparison.OrdinalIgnoreCase))
+                cleaned = cleaned.Substring(7).Trim();
+            else if (cleaned.StartsWith("target ", StringComparison.OrdinalIgnoreCase))
+                cleaned = cleaned.Substring(7).Trim();
+            else
+                return false;
+
+            if (cleaned == "p1" || cleaned == "1" || cleaned == "player1" || cleaned == "lamb")
+            {
+                targetMode = TargetPlayerMode.Player1;
+                return true;
+            }
+            if (cleaned == "p2" || cleaned == "2" || cleaned == "player2" || cleaned == "goat")
+            {
+                targetMode = TargetPlayerMode.Player2;
+                return true;
+            }
+            if (cleaned == "both" || cleaned == "all" || cleaned == "p1+p2" || cleaned == "p1p2")
+            {
+                targetMode = TargetPlayerMode.Both;
+                return true;
+            }
+
+            return false;
+        }
+
         public static bool TryProcessFormCommand(string candidate, string source)
         {
+            if (string.IsNullOrWhiteSpace(candidate)) return false;
+
+            string trimmed = candidate.Trim();
+
+            // 1. Explicit target switch commands: e.g. "target:p1", "target:p2", "target:both"
+            if (TryParseTargetCommand(trimmed, out var targetMode))
+            {
+                Log.LogInfo($"[TarotCardReceiver] Target command received via {source}: {targetMode}");
+                SetTargetMode(targetMode);
+                return true;
+            }
+
+            // 2. Direct player-prefixed form commands: e.g. "p1:owl", "p2:snake"
+            if (trimmed.StartsWith("p1:", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("p1=", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("p1 ", StringComparison.OrdinalIgnoreCase))
+            {
+                string formPart = trimmed.Substring(3).Trim();
+                if (TryParseForm(formPart, out var p1Form))
+                {
+                    Log.LogInfo($"[TarotCardReceiver] P1 form command received via {source}: {p1Form}");
+                    SetPlayerForm(0, p1Form);
+                    ShowNotification($"Player 1 (Lamb): {p1Form}");
+                    return true;
+                }
+            }
+            else if (trimmed.StartsWith("p2:", StringComparison.OrdinalIgnoreCase) ||
+                     trimmed.StartsWith("p2=", StringComparison.OrdinalIgnoreCase) ||
+                     trimmed.StartsWith("p2 ", StringComparison.OrdinalIgnoreCase))
+            {
+                string formPart = trimmed.Substring(3).Trim();
+                if (TryParseForm(formPart, out var p2Form))
+                {
+                    Log.LogInfo($"[TarotCardReceiver] P2 form command received via {source}: {p2Form}");
+                    SetPlayerForm(1, p2Form);
+                    ShowNotification($"Player 2 (Goat): {p2Form}");
+                    return true;
+                }
+            }
+
+            // 3. Standard form command applied to current active target
             if (TryParseForm(candidate, out var form))
             {
                 Log.LogInfo($"[TarotCardReceiver] Form command received via {source}: {form}");
                 SetPlayerForm(form);
                 return true;
             }
+
             return false;
+        }
+
+        public static PlayerForm GetPlayerForm(int playerID)
+        {
+            if (playerID == 1) return Player2Form;
+            return Player1Form;
         }
 
         public static void SetPlayerForm(PlayerForm form)
         {
-            CurrentPlayerForm = form;
-            Log.LogInfo($"[TarotCardReceiver] Setting player form to: {form}");
+            Log.LogInfo($"[TarotCardReceiver] Setting player form to: {form} (Target: {CurrentTargetMode})");
+
+            var players = PlayerFarming.players;
+            bool hasPlayer2 = players != null && players.Count > 1;
+
+            if (CurrentTargetMode == TargetPlayerMode.Player2 && !hasPlayer2)
+            {
+                // Fallback to Player 1 if Player 2 is not in game
+                SetPlayerForm(0, form);
+                ShowNotification($"Player Form: {form}");
+                return;
+            }
+
+            switch (CurrentTargetMode)
+            {
+                case TargetPlayerMode.Player1:
+                    SetPlayerForm(0, form);
+                    ShowNotification($"Player 1 (Lamb): {form}");
+                    break;
+                case TargetPlayerMode.Player2:
+                    SetPlayerForm(1, form);
+                    ShowNotification($"Player 2 (Goat): {form}");
+                    break;
+                case TargetPlayerMode.Both:
+                    SetPlayerForm(0, form);
+                    SetPlayerForm(1, form);
+                    ShowNotification($"Both Players: {form}");
+                    break;
+            }
+        }
+
+        public static void SetPlayerForm(int playerID, PlayerForm form)
+        {
+            if (playerID == 1)
+            {
+                Player2Form = form;
+            }
+            else
+            {
+                Player1Form = form;
+            }
+
+            Log.LogInfo($"[TarotCardReceiver] Set Player {playerID + 1} form to: {form}");
 
             var players = PlayerFarming.players;
             if (players != null && players.Count > 0)
             {
                 foreach (var player in players)
                 {
-                    if (player != null)
+                    if (player != null && player.playerID == playerID)
                     {
                         ApplyFormToPlayer(player, form);
                     }
                 }
             }
-            else if (PlayerFarming.Instance != null)
+            else if (playerID == 0 && PlayerFarming.Instance != null)
             {
                 ApplyFormToPlayer(PlayerFarming.Instance, form);
             }
-
-            ShowNotification($"Player Form: {form}");
         }
 
         public static void ApplyFormToPlayer(PlayerFarming player, PlayerForm form)
@@ -294,29 +443,101 @@ namespace COTLTarotCardReceiver
             player.SetSkin();
         }
 
+        public static void SetTargetMode(TargetPlayerMode mode)
+        {
+            CurrentTargetMode = mode;
+            string targetName = GetTargetModeString(mode);
+            Log?.LogInfo($"[TarotCardReceiver] Skin target set to: {targetName}");
+            ShowNotification($"Skin Target: {targetName}");
+        }
+
+        public static void CycleTargetMode()
+        {
+            switch (CurrentTargetMode)
+            {
+                case TargetPlayerMode.Player1:
+                    SetTargetMode(TargetPlayerMode.Player2);
+                    break;
+                case TargetPlayerMode.Player2:
+                    SetTargetMode(TargetPlayerMode.Both);
+                    break;
+                case TargetPlayerMode.Both:
+                default:
+                    SetTargetMode(TargetPlayerMode.Player1);
+                    break;
+            }
+        }
+
+        public static void SelectTargetFromPlayer(int playerIndex)
+        {
+            if (playerIndex == 0)
+            {
+                if (CurrentTargetMode == TargetPlayerMode.Player1)
+                    SetTargetMode(TargetPlayerMode.Both);
+                else
+                    SetTargetMode(TargetPlayerMode.Player1);
+            }
+            else if (playerIndex == 1)
+            {
+                if (CurrentTargetMode == TargetPlayerMode.Player2)
+                    SetTargetMode(TargetPlayerMode.Both);
+                else
+                    SetTargetMode(TargetPlayerMode.Player2);
+            }
+        }
+
+        public static string GetTargetModeString(TargetPlayerMode mode)
+        {
+            switch (mode)
+            {
+                case TargetPlayerMode.Player1:
+                    return "Player 1 (The Lamb)";
+                case TargetPlayerMode.Player2:
+                    return "Player 2 (The Goat)";
+                case TargetPlayerMode.Both:
+                    return "Both Players";
+                default:
+                    return mode.ToString();
+            }
+        }
+
         public static void CyclePlayerForm()
         {
-            PlayerForm nextForm;
-            switch (CurrentPlayerForm)
+            if (CurrentTargetMode == TargetPlayerMode.Player1)
+            {
+                SetPlayerForm(0, GetNextForm(Player1Form));
+                ShowNotification($"Player 1 (Lamb): {Player1Form}");
+            }
+            else if (CurrentTargetMode == TargetPlayerMode.Player2)
+            {
+                SetPlayerForm(1, GetNextForm(Player2Form));
+                ShowNotification($"Player 2 (Goat): {Player2Form}");
+            }
+            else // Both
+            {
+                PlayerForm nextForm = GetNextForm(Player1Form);
+                SetPlayerForm(0, nextForm);
+                SetPlayerForm(1, nextForm);
+                ShowNotification($"Both Players: {nextForm}");
+            }
+        }
+
+        private static PlayerForm GetNextForm(PlayerForm current)
+        {
+            switch (current)
             {
                 case PlayerForm.Default:
                 case PlayerForm.Lamb:
-                    nextForm = PlayerForm.Goat;
-                    break;
+                    return PlayerForm.Goat;
                 case PlayerForm.Goat:
-                    nextForm = PlayerForm.Owl;
-                    break;
+                    return PlayerForm.Owl;
                 case PlayerForm.Owl:
-                    nextForm = PlayerForm.Snake;
-                    break;
+                    return PlayerForm.Snake;
                 case PlayerForm.Snake:
-                    nextForm = PlayerForm.Lamb;
-                    break;
+                    return PlayerForm.Default;
                 default:
-                    nextForm = PlayerForm.Lamb;
-                    break;
+                    return PlayerForm.Default;
             }
-            SetPlayerForm(nextForm);
         }
 
         public static void ProcessIncomingCard(string candidate, string source)
@@ -354,6 +575,47 @@ namespace COTLTarotCardReceiver
             {
                 Log.LogWarning($"[TarotCardReceiver] Unknown card payload from {source}: '{candidate}'");
             }
+        }
+
+        private static int lastF8Frame = -1;
+        private static float lastF8Time = 0f;
+        private static int lastF9Frame = -1;
+        private static float lastF9Time = 0f;
+        private static int lastF10Frame = -1;
+        private static float lastF10Time = 0f;
+
+        private static string onScreenNotificationText = "";
+        private static float onScreenNotificationExpiry = 0f;
+
+        public static void SetOnScreenNotification(string message)
+        {
+            onScreenNotificationText = message;
+            onScreenNotificationExpiry = Time.unscaledTime + 2.5f;
+        }
+
+        public static void DrawOnGUI()
+        {
+            if (Time.unscaledTime < onScreenNotificationExpiry && !string.IsNullOrEmpty(onScreenNotificationText))
+            {
+                GUI.depth = -1000;
+                var style = new GUIStyle(GUI.skin.box);
+                style.fontSize = 22;
+                style.fontStyle = FontStyle.Bold;
+                style.alignment = TextAnchor.MiddleCenter;
+                style.normal.textColor = Color.yellow;
+
+                float width = 460f;
+                float height = 50f;
+                float x = (Screen.width - width) / 2f;
+                float y = 45f;
+
+                GUI.Box(new Rect(x, y, width, height), onScreenNotificationText, style);
+            }
+        }
+
+        private void OnGUI()
+        {
+            DrawOnGUI();
         }
 
         public static void TickInGame()
@@ -425,18 +687,46 @@ namespace COTLTarotCardReceiver
 
         private void Update()
         {
+            CheckTargetToggleInput();
             TickInGame();
+        }
 
-            if (Input.GetKeyDown(KeyCode.F9))
+        public static void CheckTargetToggleInput()
+        {
+            // 1. Keyboard F8 hotkey: Cycle through Player 1 -> Player 2 -> Both
+            if (Input.GetKeyDown(KeyCode.F8) &&
+                Time.frameCount != lastF8Frame &&
+                (Time.unscaledTime - lastF8Time > 0.35f))
             {
-                Log?.LogInfo("[TarotCardReceiver] F9 pressed: testing Neptune's Curse fish storm!");
-                NeptunesCurseFishStorm.Trigger();
+                lastF8Frame = Time.frameCount;
+                lastF8Time = Time.unscaledTime;
+                Log?.LogInfo("[TarotCardReceiver] F8 detected! Cycling target mode...");
+                CycleTargetMode();
+                return;
             }
 
-            if (Input.GetKeyDown(KeyCode.F10))
+            // Keyboard F10 hotkey: Cycle player form
+            if (Input.GetKeyDown(KeyCode.F10) &&
+                Time.frameCount != lastF10Frame &&
+                (Time.unscaledTime - lastF10Time > 0.35f))
             {
-                Log?.LogInfo("[TarotCardReceiver] F10 pressed: cycling player form!");
+                lastF10Frame = Time.frameCount;
+                lastF10Time = Time.unscaledTime;
+                Log?.LogInfo("[TarotCardReceiver] F10 detected! Cycling player form...");
                 CyclePlayerForm();
+                return;
+            }
+
+            // Keyboard F9 hotkey: Neptune's Curse
+            if (Input.GetKeyDown(KeyCode.F9) &&
+                Time.frameCount != lastF9Frame &&
+                (Time.unscaledTime - lastF9Time > 0.35f))
+            {
+                lastF9Frame = Time.frameCount;
+                lastF9Time = Time.unscaledTime;
+                Log?.LogInfo("[TarotCardReceiver] F9 detected! Triggering Neptune's Curse...");
+                NeptunesCurseFishStorm.Trigger();
+                return;
             }
         }
 
@@ -464,10 +754,12 @@ namespace COTLTarotCardReceiver
 
         public static void ShowNotification(string message)
         {
+            SetOnScreenNotification(message);
             try
             {
                 if (NotificationCentre.Instance != null)
                 {
+                    NotificationCentre.Instance.ClearNotifications();
                     NotificationCentre.Instance.Show(true);
                     NotificationCentre.Instance.PlayGenericNotification(message, NotificationBase.Flair.Positive);
                 }
@@ -930,6 +1222,19 @@ namespace COTLTarotCardReceiver
         }
     }
 
+    public class TarotReceiverRunner : MonoBehaviour
+    {
+        private void Update()
+        {
+            TarotCardReceiverPlugin.CheckTargetToggleInput();
+        }
+
+        private void OnGUI()
+        {
+            TarotCardReceiverPlugin.DrawOnGUI();
+        }
+    }
+
     // Hook Cult of the Lamb's simulation loop
     [HarmonyPatch(typeof(SimulationManager), "Update")]
     public static class SimulationManager_TarotReceiver_Patch
@@ -937,7 +1242,31 @@ namespace COTLTarotCardReceiver
         [HarmonyPostfix]
         public static void Postfix()
         {
+            TarotCardReceiverPlugin.CheckTargetToggleInput();
             TarotCardReceiverPlugin.TickInGame();
+        }
+    }
+
+    [HarmonyPatch(typeof(HUD_Manager), "Update")]
+    public static class HUD_Manager_Update_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix()
+        {
+            TarotCardReceiverPlugin.CheckTargetToggleInput();
+        }
+    }
+
+    [HarmonyPatch(typeof(PlayerFarming), "Update")]
+    public static class PlayerFarming_Update_Input_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(PlayerFarming __instance)
+        {
+            if (__instance != null && __instance.playerID == 0)
+            {
+                TarotCardReceiverPlugin.CheckTargetToggleInput();
+            }
         }
     }
 
@@ -1021,32 +1350,35 @@ namespace COTLTarotCardReceiver
         [HarmonyPrefix]
         public static bool Prefix(PlayerFarming __instance, bool BlackAndWhite, ref Spine.Skin __result)
         {
-            if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Default)
+            PlayerForm form = TarotCardReceiverPlugin.GetPlayerForm(__instance.playerID);
+            if (form == PlayerForm.Default)
             {
                 return true;
             }
 
             try
             {
-                if (__instance.playerID != 0)
+                if (form == PlayerForm.Goat)
                 {
                     __instance.IsGoat = true;
+                    __instance.isLamb = false;
                 }
-                else
+                else if (form == PlayerForm.Lamb)
                 {
-                    if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Goat)
-                        __instance.IsGoat = true;
-                    else if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Lamb)
-                        __instance.IsGoat = (DataManager.Instance != null && DataManager.Instance.PlayerVisualFleece == 1003);
-                    else
-                        __instance.IsGoat = false;
+                    __instance.IsGoat = (DataManager.Instance != null && DataManager.Instance.PlayerVisualFleece == 1003);
+                    __instance.isLamb = true;
+                }
+                else if (form == PlayerForm.Owl || form == PlayerForm.Snake)
+                {
+                    __instance.IsGoat = false;
+                    __instance.isLamb = true;
                 }
 
                 Spine.Skin playerSkin = new Spine.Skin("Player Skin");
                 Traverse.Create(__instance).Field("PlayerSkin").SetValue(playerSkin);
 
                 Spine.Skin characterSkin = null;
-                if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Owl)
+                if (form == PlayerForm.Owl)
                 {
                     characterSkin = __instance.Spine.Skeleton.Data.FindSkin("Owl");
                     if (characterSkin != null)
@@ -1095,7 +1427,7 @@ namespace COTLTarotCardReceiver
                         }
                     }
                 }
-                else if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Snake)
+                else if (form == PlayerForm.Snake)
                 {
                     characterSkin = __instance.Spine.Skeleton.Data.FindSkin("Snake");
                     if (characterSkin != null)
@@ -1130,7 +1462,7 @@ namespace COTLTarotCardReceiver
                         }
                     }
                 }
-                else if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Goat || __instance.IsGoat)
+                else if (form == PlayerForm.Goat || __instance.IsGoat)
                 {
                     characterSkin = __instance.Spine.Skeleton.Data.FindSkin("Goat");
                     if (characterSkin != null) playerSkin.AddSkin(characterSkin);
@@ -1232,8 +1564,7 @@ namespace COTLTarotCardReceiver
                 __instance.Spine.Skeleton.SetSlotsToSetupPose();
 
                 // Clear Lamb ear attachments when using Owl or Snake form
-                if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Owl ||
-                    TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Snake)
+                if (form == PlayerForm.Owl || form == PlayerForm.Snake)
                 {
                     var earLeft = __instance.Spine.Skeleton.FindSlot("EAR_LEFT");
                     if (earLeft != null) earLeft.Attachment = null;
@@ -1259,10 +1590,10 @@ namespace COTLTarotCardReceiver
         [HarmonyPrefix]
         public static bool Prefix(PlayerFarming __instance, ref IEnumerator __result)
         {
-            if (TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Owl ||
-                TarotCardReceiverPlugin.CurrentPlayerForm == PlayerForm.Snake)
+            PlayerForm form = TarotCardReceiverPlugin.GetPlayerForm(__instance.playerID);
+            if (form == PlayerForm.Owl || form == PlayerForm.Snake)
             {
-                __result = FormSoundManager.CustomBleatRoutine(__instance, TarotCardReceiverPlugin.CurrentPlayerForm);
+                __result = FormSoundManager.CustomBleatRoutine(__instance, form);
                 return false;
             }
             return true;
