@@ -45,7 +45,7 @@ def sanitize_card_message(raw_msg: str) -> str:
         try:
             parsed = json.loads(msg)
             if isinstance(parsed, dict):
-                for key in ("card", "name", "id", "cardType"):
+                for key in ("card", "name", "id", "cardType", "command", "action", "payment"):
                     if key in parsed:
                         msg = str(parsed[key]).strip()
                         break

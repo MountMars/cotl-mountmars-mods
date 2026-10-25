@@ -38,7 +38,10 @@ static const std::map<String, String> cardMap = {
     {"form:owl", "form:owl"},
     {"form:goat", "form:goat"},
     {"form:snake", "form:snake"},
-    {"form:lamb", "form:lamb"}};
+    {"form:lamb", "form:lamb"},
+    {"card payment", "card payment"},
+    {"Card Payment", "card payment"},
+    {"payment", "card payment"}};
 
 #define SS_PIN 21  // SDA pin on RC522
 #define RST_PIN 22 // RST pin on RC522

@@ -129,6 +129,15 @@ namespace COTLTarotCardReceiver
             {
                 Log.LogWarning($"Error initializing FormSoundManager: {ex.Message}");
             }
+
+            try
+            {
+                PaymentManager.Initialize(this);
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning($"Error initializing PaymentManager: {ex.Message}");
+            }
         }
 
         private void OnDestroy()
@@ -547,6 +556,18 @@ namespace COTLTarotCardReceiver
                 return;
             }
 
+            // Check if PaymentManager is awaiting card swipe
+            if (PaymentManager.Instance != null && PaymentManager.Instance.IsWaitingForCard)
+            {
+                string cleanedMsg = candidate.Trim().ToLowerInvariant();
+                if (cleanedMsg == "card payment" || cleanedMsg == "card_payment" || cleanedMsg == "payment")
+                {
+                    Log.LogInfo($"[TarotCardReceiver] Payment signal '{candidate}' received via {source}!");
+                    PaymentManager.Instance.OnCardPaymentReceived();
+                    return;
+                }
+            }
+
             if (TryParseCard(candidate, out var card))
             {
                 // Deduplicate if exact same card arrived within 1.0s (e.g. from simultaneous UDP + HTTP / fast repeat)
@@ -611,6 +632,8 @@ namespace COTLTarotCardReceiver
 
                 GUI.Box(new Rect(x, y, width, height), onScreenNotificationText, style);
             }
+
+            PaymentManager.Instance?.DrawOnGUI();
         }
 
         private void OnGUI()
@@ -626,6 +649,8 @@ namespace COTLTarotCardReceiver
                 hasLoggedReady = false;
                 return;
             }
+
+            PaymentManager.Instance?.Update();
 
             if (!hasLoggedReady)
             {
@@ -688,6 +713,7 @@ namespace COTLTarotCardReceiver
         private void Update()
         {
             CheckTargetToggleInput();
+            PaymentManager.Instance?.Update();
             TickInGame();
         }
 
@@ -1227,11 +1253,13 @@ namespace COTLTarotCardReceiver
         private void Update()
         {
             TarotCardReceiverPlugin.CheckTargetToggleInput();
+            PaymentManager.Instance?.Update();
         }
 
         private void OnGUI()
         {
             TarotCardReceiverPlugin.DrawOnGUI();
+            PaymentManager.Instance?.DrawOnGUI();
         }
     }
 
