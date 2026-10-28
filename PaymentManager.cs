@@ -1,8 +1,11 @@
 using System;
+using System.Collections;
 using System.Text.RegularExpressions;
 using HarmonyLib;
 using Lamb.UI;
+using Spine.Unity;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
 
 namespace COTLTarotCardReceiver
 {
@@ -10,7 +13,9 @@ namespace COTLTarotCardReceiver
     {
         Idle,
         MethodSelection, // Screen 1: "How do you want to pay?" (Card, Cash, Cancel)
-        CardSwipePrompt  // Screen 2: "Please swipe card..."
+        CardSwipePrompt, // Screen 2: "Please swipe card..."
+        Processing,      // Screen 2.5: "Processing..." + Midas plays "steal-money"
+        PaymentSuccess   // Screen 3: "Thanks for using MidasPAY"
     }
 
     public class PaymentManager : MonoBehaviour
@@ -83,7 +88,13 @@ namespace COTLTarotCardReceiver
         private static GUIStyle selectedBtnStyle;
         private static GUIStyle noticeStyle;
         private static GUIStyle pulsingStatusStyle;
+        private static GUIStyle successStyle;
         private static bool stylesInitialized = false;
+
+        private static SkeletonDataAsset cachedMidasSkeletonData;
+        private GameObject spawnedMidasGo;
+        private Coroutine activeCelebrationRoutine;
+        private float celebrationStartTime = 0f;
 
         public static void Initialize(MonoBehaviour host)
         {
@@ -97,7 +108,32 @@ namespace COTLTarotCardReceiver
             {
                 instance = existing;
             }
+            PreloadMidasAsset();
             TarotCardReceiverPlugin.Log?.LogInfo("[PaymentManager] Initialized as MonoBehaviour on host GameObject.");
+        }
+
+        public static void PreloadMidasAsset()
+        {
+            if (cachedMidasSkeletonData != null) return;
+            try
+            {
+                Addressables.LoadAssetAsync<SkeletonDataAsset>("Assets/Art/Spine/NPCs/Midas/MidasNPC.asset").Completed += handle =>
+                {
+                    if (handle.Status == UnityEngine.ResourceManagement.AsyncOperations.AsyncOperationStatus.Succeeded)
+                    {
+                        cachedMidasSkeletonData = handle.Result;
+                        TarotCardReceiverPlugin.Log?.LogInfo("[PaymentManager] MidasNPC SkeletonDataAsset preloaded successfully!");
+                    }
+                    else
+                    {
+                        TarotCardReceiverPlugin.Log?.LogWarning("[PaymentManager] Failed to preload MidasNPC SkeletonDataAsset.");
+                    }
+                };
+            }
+            catch (Exception ex)
+            {
+                TarotCardReceiverPlugin.Log?.LogWarning($"[PaymentManager] Error during Midas preload: {ex.Message}");
+            }
         }
 
         public static bool IsEligiblePurchaseInteraction(Interaction interaction)
@@ -134,6 +170,11 @@ namespace COTLTarotCardReceiver
         public void StartPayment(Interaction interaction, PlayerFarming player)
         {
             if (IsActive || interaction == null) return;
+
+            if (cachedMidasSkeletonData == null)
+            {
+                PreloadMidasAsset();
+            }
 
             currentInteraction = interaction;
             currentPlayer = player ?? PlayerFarming.Instance ?? (PlayerFarming.players != null && PlayerFarming.players.Count > 0 ? PlayerFarming.players[0] : null);
@@ -318,6 +359,15 @@ namespace COTLTarotCardReceiver
                     return;
                 }
             }
+            else if (CurrentState == PaymentState.PaymentSuccess)
+            {
+                // After 0.8s, allow skipping celebration early if player presses accept/cancel
+                if ((acceptPressed || cancelPressed) && (Time.unscaledTime - celebrationStartTime > 0.8f))
+                {
+                    CloseAndUnfreeze();
+                    return;
+                }
+            }
         }
 
         private void ExecuteOption(int option)
@@ -365,7 +415,7 @@ namespace COTLTarotCardReceiver
         {
             if (!IsWaitingForCard) return;
 
-            TarotCardReceiverPlugin.Log?.LogInfo($"[PaymentManager] Card payment verified for {itemName}!");
+            TarotCardReceiverPlugin.Log?.LogInfo($"[PaymentManager] Card payment signal received for {itemName}!");
 
             // Check affordability
             if (itemCost > 0 && Inventory.GetItemQuantity((int)costType) < itemCost)
@@ -376,7 +426,278 @@ namespace COTLTarotCardReceiver
                 return;
             }
 
-            // Execute purchase fulfillment
+            // Enter processing state and start the Midas animation sequence
+            CurrentState = PaymentState.Processing;
+            if (activeCelebrationRoutine != null)
+            {
+                StopCoroutine(activeCelebrationRoutine);
+            }
+            activeCelebrationRoutine = StartCoroutine(ProcessPaymentSequence());
+        }
+
+        private IEnumerator ProcessPaymentSequence()
+        {
+            celebrationStartTime = Time.unscaledTime;
+            TarotCardReceiverPlugin.Log?.LogInfo("[PaymentManager] Starting Midas steal-money animation & processing sequence...");
+
+            // 1. Ensure SkeletonData is loaded
+            if (cachedMidasSkeletonData == null)
+            {
+                try
+                {
+                    var handle = Addressables.LoadAssetAsync<SkeletonDataAsset>("Assets/Art/Spine/NPCs/Midas/MidasNPC.asset");
+                    cachedMidasSkeletonData = handle.WaitForCompletion();
+                }
+                catch (Exception ex)
+                {
+                    TarotCardReceiverPlugin.Log?.LogWarning($"[PaymentManager] Synchronous load of MidasNPC failed: {ex.Message}");
+                }
+            }
+
+            Vector3 playerPos = currentPlayer != null ? currentPlayer.transform.position : (PlayerFarming.Instance != null ? PlayerFarming.Instance.transform.position : Vector3.zero);
+
+            // Determine direction pointing away from interaction into the open foreground space
+            Vector3 awayFromNpc = (playerPos - (currentInteraction != null ? currentInteraction.transform.position : playerPos));
+            awayFromNpc.z = 0f;
+            if (awayFromNpc.sqrMagnitude > 0.05f)
+            {
+                awayFromNpc.Normalize();
+            }
+            else
+            {
+                awayFromNpc = Vector3.down; // Default: towards camera (South)
+            }
+
+            // Perpendicular lateral vector for slight side offset
+            Vector3 lateral = new Vector3(-awayFromNpc.y, awayFromNpc.x, 0f);
+
+            // Determine spawn side: if interaction is on the right, spawn Midas on the left; otherwise on the right.
+            float side = -1f;
+            if (currentInteraction != null)
+            {
+                side = (currentInteraction.transform.position.x >= playerPos.x) ? -1f : 1f;
+            }
+            else if (currentPlayer != null && currentPlayer.Spine != null)
+            {
+                side = (currentPlayer.Spine.transform.localScale.x >= 0f) ? -1f : 1f;
+            }
+
+            // Spawn Midas in the clear foreground in front of the player (away from shopkeeper/spider body)
+            Vector3 spawnPos = playerPos + (awayFromNpc * 1.4f) + (lateral * (side * 0.9f));
+            spawnPos.z = playerPos.z - 0.5f;
+
+            // 2. Audio: Midas signature voice line + theft sound (no smoke VFX)
+            if (AudioManager.Instance != null)
+            {
+                try
+                {
+                    AudioManager.Instance.PlayOneShot("event:/dialogue/midas/standard_midas", spawnPos);
+                    AudioManager.Instance.PlayOneShot("event:/dlc/env/midas/steal_from_player", spawnPos);
+                }
+                catch { }
+            }
+
+            float animDuration = 2.6f;
+
+            // 3. Instantiate and animate Midas Spine NPC
+            if (cachedMidasSkeletonData != null)
+            {
+                try
+                {
+                    var spineAnim = SkeletonAnimation.NewSkeletonAnimationGameObject(cachedMidasSkeletonData);
+                    spawnedMidasGo = spineAnim != null ? spineAnim.gameObject : null;
+                    if (spawnedMidasGo != null)
+                    {
+                        spawnedMidasGo.name = "MidasNPC_Celebration";
+                        if (currentPlayer != null)
+                        {
+                            spawnedMidasGo.layer = currentPlayer.gameObject.layer;
+                        }
+                        spawnedMidasGo.transform.position = spawnPos;
+
+                        // Always keep GameObject localScale positive to avoid inverting mesh winding/culling
+                        spawnedMidasGo.transform.localScale = Vector3.one;
+
+                        // Configure Spine Z-spacing to permanently eliminate internal slot Z-fighting / texture flickering
+                        float targetZSpacing = -0.002f;
+                        if (currentPlayer != null && currentPlayer.Spine != null && Mathf.Abs(currentPlayer.Spine.zSpacing) > 0.0001f)
+                        {
+                            targetZSpacing = currentPlayer.Spine.zSpacing;
+                        }
+                        spineAnim.zSpacing = targetZSpacing;
+
+                        // Fix draw order for skeletons with multiple materials / submeshes
+                        spineAnim.fixDrawOrder = true;
+
+                        spineAnim.Initialize(false);
+                        if (spineAnim.Skeleton != null)
+                        {
+                            try { spineAnim.Skeleton.SetSkin("Normal"); } catch { }
+                            // Flip horizontally via Spine Skeleton.ScaleX rather than negative transform scale
+                            spineAnim.Skeleton.ScaleX = (playerPos.x >= spawnPos.x) ? 1f : -1f;
+                            spineAnim.Skeleton.SetSlotsToSetupPose();
+                        }
+                        spineAnim.AnimationState.SetAnimation(0, "steal-money", false);
+                        // Queue second cycle so Midas plays the steal-money animation twice
+                        spineAnim.AnimationState.AddAnimation(0, "steal-money", false, 0f);
+
+                        // Align sorting layer and ensure Midas renders in front of player
+                        MeshRenderer playerRenderer = null;
+                        if (currentPlayer != null && currentPlayer.Spine != null)
+                        {
+                            playerRenderer = currentPlayer.Spine.GetComponent<MeshRenderer>();
+                        }
+                        if (playerRenderer == null && PlayerFarming.Instance != null && PlayerFarming.Instance.Spine != null)
+                        {
+                            playerRenderer = PlayerFarming.Instance.Spine.GetComponent<MeshRenderer>();
+                        }
+
+                        var midasRenderer = spawnedMidasGo.GetComponent<MeshRenderer>();
+                        if (midasRenderer != null)
+                        {
+                            // Dynamically find the highest sorting layer and order among all nearby objects (including Helob, shop stalls, etc.)
+                            int highestNearbyLayerValue = -10000;
+                            int highestNearbyLayerId = 0;
+                            string highestNearbyLayerName = "Foreground";
+                            int highestNearbyOrder = 0;
+
+                            try
+                            {
+                                Renderer[] nearby = GameObject.FindObjectsOfType<Renderer>();
+                                foreach (var r in nearby)
+                                {
+                                    if (r == null || !r.enabled || !r.gameObject.activeInHierarchy || r == midasRenderer) continue;
+                                    float dist = Vector3.Distance(r.transform.position, playerPos);
+                                    if (dist < 8f)
+                                    {
+                                        int layerVal = SortingLayer.GetLayerValueFromID(r.sortingLayerID);
+                                        if (layerVal > highestNearbyLayerValue)
+                                        {
+                                            highestNearbyLayerValue = layerVal;
+                                            highestNearbyLayerId = r.sortingLayerID;
+                                            highestNearbyLayerName = r.sortingLayerName;
+                                            highestNearbyOrder = r.sortingOrder;
+                                        }
+                                        else if (layerVal == highestNearbyLayerValue && r.sortingOrder > highestNearbyOrder)
+                                        {
+                                            highestNearbyOrder = r.sortingOrder;
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                TarotCardReceiverPlugin.Log?.LogWarning($"[PaymentManager] Error checking nearby renderers: {ex.Message}");
+                            }
+
+                            // Compare with "Foreground" layer value to pick the higher layer
+                            int fgId = SortingLayer.NameToID("Foreground");
+                            int fgVal = SortingLayer.GetLayerValueFromID(fgId);
+                            if (highestNearbyLayerValue > fgVal && highestNearbyLayerId != 0)
+                            {
+                                midasRenderer.sortingLayerID = highestNearbyLayerId;
+                                midasRenderer.sortingLayerName = highestNearbyLayerName;
+                            }
+                            else if (fgId != 0)
+                            {
+                                midasRenderer.sortingLayerID = fgId;
+                                midasRenderer.sortingLayerName = "Foreground";
+                            }
+                            else if (playerRenderer != null)
+                            {
+                                midasRenderer.sortingLayerID = playerRenderer.sortingLayerID;
+                                midasRenderer.sortingLayerName = playerRenderer.sortingLayerName;
+                            }
+
+                            // Set order higher than any nearby object, capped at safe maximum (32700)
+                            midasRenderer.sortingOrder = Math.Min(32700, Math.Max(highestNearbyOrder + 100, 32000));
+
+                            // Set Overlay renderQueue and ZTest Always so depth buffer cannot cull Midas
+                            try
+                            {
+                                if (midasRenderer.materials != null)
+                                {
+                                    foreach (var mat in midasRenderer.materials)
+                                    {
+                                        if (mat != null)
+                                        {
+                                            mat.renderQueue = 4000;
+                                            if (mat.HasProperty("_ZTest"))
+                                            {
+                                                mat.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+
+                        TarotCardReceiverPlugin.Log?.LogInfo($"[PaymentManager] Spawned Midas at {spawnPos}, scaleX: {(spineAnim.Skeleton != null ? spineAnim.Skeleton.ScaleX.ToString() : "1")}, zSpacing: {spineAnim.zSpacing}, fixDrawOrder: {spineAnim.fixDrawOrder}, sortingLayer: {(midasRenderer != null ? midasRenderer.sortingLayerName : "none")}, order: {(midasRenderer != null ? midasRenderer.sortingOrder.ToString() : "none")}");
+
+                        // Find animation duration
+                        if (spineAnim.Skeleton != null && spineAnim.Skeleton.Data != null)
+                        {
+                            var anim = spineAnim.Skeleton.Data.FindAnimation("steal-money");
+                            if (anim != null && anim.Duration > 0.5f)
+                            {
+                                animDuration = anim.Duration;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    TarotCardReceiverPlugin.Log?.LogError($"[PaymentManager] Error setting up Midas NPC GameObject: {ex}");
+                }
+            }
+            else
+            {
+                TarotCardReceiverPlugin.Log?.LogWarning("[PaymentManager] Midas SkeletonData not available; running celebration with sound & UI only.");
+            }
+
+            // 4. Wait for first cycle of Midas steal-money animation while showing "Processing..."
+            yield return new WaitForSecondsRealtime(animDuration);
+
+            // Audio: Repeat Midas signature voice line + theft sound for cycle 2
+            if (AudioManager.Instance != null)
+            {
+                try
+                {
+                    AudioManager.Instance.PlayOneShot("event:/dialogue/midas/standard_midas", spawnPos);
+                    AudioManager.Instance.PlayOneShot("event:/dlc/env/midas/steal_from_player", spawnPos);
+                }
+                catch { }
+            }
+
+            // 5. Wait for second cycle of Midas steal-money animation
+            yield return new WaitForSecondsRealtime(animDuration);
+
+            // 6. Clean up Midas NPC
+            if (spawnedMidasGo != null)
+            {
+                Destroy(spawnedMidasGo);
+                spawnedMidasGo = null;
+            }
+
+            // 7. Transition to "Thanks for using MidasPAY" screen
+            CurrentState = PaymentState.PaymentSuccess;
+            celebrationStartTime = Time.unscaledTime;
+
+            // Wait a brief moment to display "Thanks for using MidasPAY"
+            yield return new WaitForSecondsRealtime(1.5f);
+
+            // 8. Afterwards, process and fulfill the payment confirmation
+            FulfillPayment();
+
+            activeCelebrationRoutine = null;
+            CloseAndUnfreeze();
+        }
+
+        private void FulfillPayment()
+        {
+            if (IsFulfillingPayment) return;
+
             IsFulfillingPayment = true;
             try
             {
@@ -415,12 +736,22 @@ namespace COTLTarotCardReceiver
                 IsFulfillingPayment = false;
             }
 
-            TarotCardReceiverPlugin.SetOnScreenNotification("Payment Complete!");
-            CloseAndUnfreeze();
+            TarotCardReceiverPlugin.SetOnScreenNotification("Payment Confirmed!");
         }
 
         private void CloseAndUnfreeze()
         {
+            if (activeCelebrationRoutine != null)
+            {
+                StopCoroutine(activeCelebrationRoutine);
+                activeCelebrationRoutine = null;
+            }
+            if (spawnedMidasGo != null)
+            {
+                Destroy(spawnedMidasGo);
+                spawnedMidasGo = null;
+            }
+
             CurrentState = PaymentState.Idle;
             hasLoggedGuiActive = false;
 
@@ -463,11 +794,11 @@ namespace COTLTarotCardReceiver
 
             GUI.depth = -1000;
 
-            // Centered compact dialog box dimensions
-            float width = 600f;
+            // Centered compact dialog box dimensions (moved to upper screen during processing so Midas is visible)
+            float width = 640f;
             float height = 80f;
             float x = (Screen.width - width) / 2f;
-            float y = (Screen.height - height) / 2f;
+            float y = (CurrentState == PaymentState.Processing) ? (Screen.height * 0.12f) : ((Screen.height - height) / 2f);
             Rect dialogRect = new Rect(x, y, width, height);
 
             var prevBg = GUI.backgroundColor;
@@ -491,9 +822,64 @@ namespace COTLTarotCardReceiver
             {
                 DrawMethodSelection(dialogRect);
             }
+            else if (CurrentState == PaymentState.Processing)
+            {
+                DrawProcessing(dialogRect);
+            }
+            else if (CurrentState == PaymentState.PaymentSuccess)
+            {
+                DrawPaymentSuccess(dialogRect);
+            }
 
             GUI.backgroundColor = prevBg;
             GUI.color = prevColor;
+        }
+
+        private void DrawProcessing(Rect container)
+        {
+            float contentX = container.x + 15f;
+            float contentY = container.y + 14f;
+            float contentWidth = container.width - 30f;
+            float contentHeight = container.height - 28f;
+
+            var prevBg = GUI.backgroundColor;
+            var prevColor = GUI.color;
+
+            Rect statusRect = new Rect(contentX, contentY, contentWidth, contentHeight);
+
+            // Semi-transparent backing for status prompt
+            GUI.color = new Color(0.20f, 0.14f, 0.04f, DialogOpacity);
+            GUI.DrawTexture(statusRect, Texture2D.whiteTexture);
+            GUI.color = prevColor;
+
+            GUI.backgroundColor = new Color(0.85f, 0.65f, 0.15f, DialogOpacity);
+            GUI.Box(statusRect, Gold("PROCESSING PAYMENT..."), pulsingStatusStyle);
+            GUI.backgroundColor = prevBg;
+        }
+
+        private void DrawPaymentSuccess(Rect container)
+        {
+            float contentX = container.x + 15f;
+            float contentY = container.y + 14f;
+            float contentWidth = container.width - 30f;
+            float contentHeight = container.height - 28f;
+
+            var prevBg = GUI.backgroundColor;
+            var prevColor = GUI.color;
+
+            Rect bannerRect = new Rect(contentX, contentY, contentWidth, contentHeight);
+
+            // Semi-transparent warm gold occult backdrop
+            GUI.color = new Color(0.25f, 0.17f, 0.05f, DialogOpacity);
+            GUI.DrawTexture(bannerRect, Texture2D.whiteTexture);
+            GUI.color = prevColor;
+
+            GUI.backgroundColor = new Color(0.95f, 0.72f, 0.20f, DialogOpacity);
+            GUI.Box(bannerRect, GUIContent.none, containerBoxStyle);
+            GUI.backgroundColor = prevBg;
+
+            // Centered title line: only "Thanks for using MidasPAY" (no subtitle)
+            GUI.Label(bannerRect, Gold("Thanks for using MidasPAY"), successStyle);
         }
 
         private void DrawMethodSelection(Rect container)
@@ -662,6 +1048,15 @@ namespace COTLTarotCardReceiver
                 richText = true
             };
             selectedBtnStyle.normal.textColor = Color.white;
+
+            successStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 22,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                richText = true
+            };
+            successStyle.normal.textColor = new Color(1f, 0.84f, 0.0f);
 
             stylesInitialized = true;
         }
