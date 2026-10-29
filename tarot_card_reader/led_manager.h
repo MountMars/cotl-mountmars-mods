@@ -40,6 +40,14 @@ void led_animation_sacrificial_surge();
 // 550–800ms: Lingering decay down to zero with subtle micro-flickers.
 void led_animation_ritual_heartbeat();
 
+// "The MidasPAY Audio-Lock & Coin Shimmer":
+// High-satisfaction (~650ms) payment confirmation synced with applepay.wav.
+// Current-safe for ESP32 5V rail (keeps total LED draw < 200mA).
+// 0–160ms (Tone 1 'ding'): High-speed golden orbit rushing into the top.
+// 160–280ms (Tone 2 'DING!'): Radiant golden halo impact & lock-in.
+// 280–650ms (Aftertaste): Background decays while 3-4 sparkling white-gold coins shimmer.
+void led_animation_midas_pay();
+
 // Active card play animation entry point (defaults to Sacrificial Surge)
 void led_play_card_animation(uint32_t color = 0);
 

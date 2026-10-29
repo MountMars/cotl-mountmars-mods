@@ -41,6 +41,7 @@ static const std::map<String, String> cardMap = {
     {"form:lamb", "form:lamb"},
     {"card payment", "card payment"},
     {"Card Payment", "card payment"},
+    {"Payment", "card payment"},
     {"payment", "card payment"}};
 
 #define SS_PIN 21  // SDA pin on RC522
@@ -160,8 +161,10 @@ void loop() {
       Serial.print("Mapped BLE Value: ");
       Serial.println(it->second);
       ble_send_message(it->second);
-      // Randomly select one of the two animations
-      if (random(0, 2) == 0) {
+      // Play dedicated golden animation for payment cards, ritual animations for other cards
+      if (it->second == "card payment") {
+        led_animation_midas_pay();
+      } else if (random(0, 2) == 0) {
         led_animation_sacrificial_surge();
       } else {
         led_animation_ritual_heartbeat();

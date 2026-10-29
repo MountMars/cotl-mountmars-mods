@@ -136,40 +136,138 @@ namespace COTLTarotCardReceiver
             }
         }
 
-        public static bool IsEligiblePurchaseInteraction(Interaction interaction)
+        public static bool TryGetPurchaseInfo(Interaction interaction, out int cost, out InventoryItem.ITEM_TYPE type, out string name)
         {
+            cost = 0;
+            type = InventoryItem.ITEM_TYPE.BLACK_GOLD;
+            name = "Item";
+
             if (interaction == null || !interaction.Interactable) return false;
 
             if (interaction is Interaction_BuyItem buyItem)
             {
-                return !buyItem.Activated;
+                if (buyItem.Activated) return false;
+
+                cost = buyItem.GetCost();
+                if (buyItem.itemForSale != null)
+                {
+                    type = buyItem.itemForSale.costType;
+                    if (buyItem.itemForSale.TarotCard)
+                    {
+                        try
+                        {
+                            name = TarotCards.LocalisedName(buyItem.itemForSale.Card);
+                        }
+                        catch { }
+                        if (string.IsNullOrWhiteSpace(name))
+                        {
+                            name = $"Tarot Card: {buyItem.itemForSale.Card}";
+                        }
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(name) || name == "Item")
+                {
+                    name = CleanText(buyItem.Label);
+                }
+                if (string.IsNullOrWhiteSpace(name) || name == "Item")
+                {
+                    name = buyItem.itemForSale != null ? buyItem.itemForSale.itemToBuy.ToString() : "Shop Item";
+                }
+
+                return cost > 0;
             }
+
             if (interaction is Interaction_FollowerInSpiderWeb spider)
             {
-                return !spider.Activated;
+                if (spider.Activated) return false;
+
+                cost = spider.Cost;
+                type = InventoryItem.ITEM_TYPE.BLACK_GOLD;
+                name = CleanText(spider.Label);
+                if (string.IsNullOrWhiteSpace(name)) name = "Follower in Spider Web";
+
+                return cost > 0;
             }
+
             if (interaction is Interaction_FollowerInSpiderWebDailyShop spiderDaily)
             {
                 try
                 {
-                    return !Traverse.Create(spiderDaily).Field<bool>("Activated").Value;
+                    if (Traverse.Create(spiderDaily).Field<bool>("Activated").Value) return false;
                 }
-                catch
-                {
-                    return true;
-                }
+                catch { }
+
+                cost = spiderDaily.Cost;
+                type = InventoryItem.ITEM_TYPE.BLACK_GOLD;
+                name = CleanText(spiderDaily.Label);
+                if (string.IsNullOrWhiteSpace(name)) name = "Follower in Spider Web";
+
+                return cost > 0;
             }
+
             if (interaction is Interaction_Tarot tarot)
             {
-                return !tarot.Activated;
+                if (tarot.Activated) return false;
+
+                // Clauneck's altar is free by default (devotionCost is 0).
+                // If a tarot card costs gold or currency (e.g. custom/modded), charge for it; otherwise bypass.
+                cost = 0;
+                type = InventoryItem.ITEM_TYPE.BLACK_GOLD;
+
+                try
+                {
+                    var goldField = Traverse.Create(tarot).Field("goldCost");
+                    if (goldField.FieldExists())
+                    {
+                        cost = goldField.GetValue<int>();
+                        type = InventoryItem.ITEM_TYPE.BLACK_GOLD;
+                    }
+                }
+                catch { }
+
+                if (cost <= 0)
+                {
+                    try
+                    {
+                        var devField = Traverse.Create(tarot).Field("devotionCost");
+                        if (devField.FieldExists())
+                        {
+                            int dCost = devField.GetValue<int>();
+                            if (dCost > 0)
+                            {
+                                cost = dCost;
+                                type = InventoryItem.ITEM_TYPE.SOUL;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                name = CleanText(tarot.Label);
+                if (string.IsNullOrWhiteSpace(name)) name = "Clauneck's Tarot Card";
+
+                return cost > 0;
             }
 
             return false;
         }
 
+        public static bool IsEligiblePurchaseInteraction(Interaction interaction)
+        {
+            return TryGetPurchaseInfo(interaction, out int cost, out _, out _) && cost > 0;
+        }
+
         public void StartPayment(Interaction interaction, PlayerFarming player)
         {
             if (IsActive || interaction == null) return;
+
+            // Bypass payment if interaction is free or costs 0
+            if (!IsEligiblePurchaseInteraction(interaction))
+            {
+                TarotCardReceiverPlugin.Log?.LogInfo($"[PaymentManager] Interaction {interaction.GetType().Name} is free or cost is 0. Bypassing payment.");
+                return;
+            }
 
             if (cachedMidasSkeletonData == null)
             {
@@ -196,50 +294,17 @@ namespace COTLTarotCardReceiver
 
         private void ExtractItemDetails(Interaction interaction)
         {
-            itemCost = 0;
-            costType = InventoryItem.ITEM_TYPE.BLACK_GOLD;
-            itemName = "Item";
-
-            if (interaction is Interaction_BuyItem buyItem)
+            if (TryGetPurchaseInfo(interaction, out int cost, out InventoryItem.ITEM_TYPE type, out string name))
             {
-                itemCost = buyItem.GetCost();
-                if (buyItem.itemForSale != null)
-                {
-                    costType = buyItem.itemForSale.costType;
-                }
-                itemName = CleanText(buyItem.Label);
-                if (string.IsNullOrWhiteSpace(itemName) || itemName == "Item")
-                {
-                    itemName = buyItem.itemForSale != null ? buyItem.itemForSale.itemToBuy.ToString() : "Shop Item";
-                }
+                itemCost = cost;
+                costType = type;
+                itemName = name;
             }
-            else if (interaction is Interaction_FollowerInSpiderWeb spider)
+            else
             {
-                itemCost = spider.Cost;
+                itemCost = 0;
                 costType = InventoryItem.ITEM_TYPE.BLACK_GOLD;
-                itemName = CleanText(spider.Label);
-                if (string.IsNullOrWhiteSpace(itemName)) itemName = "Follower in Spider Web";
-            }
-            else if (interaction is Interaction_FollowerInSpiderWebDailyShop spiderDaily)
-            {
-                itemCost = spiderDaily.Cost;
-                costType = InventoryItem.ITEM_TYPE.BLACK_GOLD;
-                itemName = CleanText(spiderDaily.Label);
-                if (string.IsNullOrWhiteSpace(itemName)) itemName = "Follower in Spider Web";
-            }
-            else if (interaction is Interaction_Tarot tarot)
-            {
-                try
-                {
-                    itemCost = Traverse.Create(tarot).Field<int>("devotionCost").Value;
-                }
-                catch
-                {
-                    itemCost = 0;
-                }
-                costType = InventoryItem.ITEM_TYPE.SOUL;
-                itemName = CleanText(tarot.Label);
-                if (string.IsNullOrWhiteSpace(itemName)) itemName = "Clauneck's Tarot Card";
+                itemName = "Item";
             }
 
             if (string.IsNullOrWhiteSpace(itemName))
@@ -248,7 +313,7 @@ namespace COTLTarotCardReceiver
             }
         }
 
-        private string CleanText(string raw)
+        public static string CleanText(string raw)
         {
             if (string.IsNullOrEmpty(raw)) return "";
             string cleaned = Regex.Replace(raw, "<.*?>", string.Empty);
@@ -486,20 +551,11 @@ namespace COTLTarotCardReceiver
             Vector3 spawnPos = playerPos + (awayFromNpc * 1.4f) + (lateral * (side * 0.9f));
             spawnPos.z = playerPos.z - 0.5f;
 
-            // 2. Audio: Midas signature voice line + theft sound (no smoke VFX)
-            if (AudioManager.Instance != null)
-            {
-                try
-                {
-                    AudioManager.Instance.PlayOneShot("event:/dialogue/midas/standard_midas", spawnPos);
-                    AudioManager.Instance.PlayOneShot("event:/dlc/env/midas/steal_from_player", spawnPos);
-                }
-                catch { }
-            }
-
             float animDuration = 2.6f;
+            int midasLayerId = SortingLayer.NameToID("Foreground");
+            int midasOrder = 32000;
 
-            // 3. Instantiate and animate Midas Spine NPC
+            // 2. Instantiate and configure Midas Spine NPC
             if (cachedMidasSkeletonData != null)
             {
                 try
@@ -612,6 +668,9 @@ namespace COTLTarotCardReceiver
                             // Set order higher than any nearby object, capped at safe maximum (32700)
                             midasRenderer.sortingOrder = Math.Min(32700, Math.Max(highestNearbyOrder + 100, 32000));
 
+                            midasLayerId = midasRenderer.sortingLayerID;
+                            midasOrder = midasRenderer.sortingOrder;
+
                             // Set Overlay renderQueue and ZTest Always so depth buffer cannot cull Midas
                             try
                             {
@@ -656,24 +715,37 @@ namespace COTLTarotCardReceiver
                 TarotCardReceiverPlugin.Log?.LogWarning("[PaymentManager] Midas SkeletonData not available; running celebration with sound & UI only.");
             }
 
-            // 4. Wait for first cycle of Midas steal-money animation while showing "Processing..."
-            yield return new WaitForSecondsRealtime(animDuration);
-
-            // Audio: Repeat Midas signature voice line + theft sound for cycle 2
+            // 3. Smoke VFX & Appearance Audio: Midas appears out of smoke
+            EmitSmokeVFX(spawnPos, midasLayerId, midasOrder + 5);
             if (AudioManager.Instance != null)
             {
                 try
                 {
+                    AudioManager.Instance.PlayOneShot("event:/enemy/teleport_appear", spawnPos);
                     AudioManager.Instance.PlayOneShot("event:/dialogue/midas/standard_midas", spawnPos);
                     AudioManager.Instance.PlayOneShot("event:/dlc/env/midas/steal_from_player", spawnPos);
                 }
                 catch { }
             }
 
-            // 5. Wait for second cycle of Midas steal-money animation
+            // 4. Wait for first cycle of Midas steal-money animation while showing "Processing..."
             yield return new WaitForSecondsRealtime(animDuration);
 
-            // 6. Clean up Midas NPC
+            // 5. Wait for second cycle of Midas steal-money animation (audio played only once during first cycle)
+            yield return new WaitForSecondsRealtime(animDuration);
+
+            // 6. Smoke VFX & Disappearance Audio: Midas disappears in smoke
+            EmitSmokeVFX(spawnPos, midasLayerId, midasOrder + 5);
+            if (AudioManager.Instance != null)
+            {
+                try
+                {
+                    AudioManager.Instance.PlayOneShot("event:/enemy/teleport_away", spawnPos);
+                }
+                catch { }
+            }
+
+            // Clean up Midas NPC
             if (spawnedMidasGo != null)
             {
                 Destroy(spawnedMidasGo);
@@ -765,6 +837,56 @@ namespace COTLTarotCardReceiver
 
             currentInteraction = null;
             currentPlayer = null;
+        }
+
+        private static void EmitSmokeVFX(Vector3 position, int sortingLayerId = 0, int sortingOrder = 0)
+        {
+            try
+            {
+                var biome = BiomeConstants.Instance ?? GameObject.FindObjectOfType<BiomeConstants>();
+                if (biome != null)
+                {
+                    var vfx = biome.EmitSmokeExplosionVFX(position);
+                    if (vfx != null && (sortingLayerId != 0 || sortingOrder > 0))
+                    {
+                        var renderers = vfx.GetComponentsInChildren<Renderer>(true);
+                        foreach (var r in renderers)
+                        {
+                            if (r == null) continue;
+                            if (sortingLayerId != 0)
+                            {
+                                r.sortingLayerID = sortingLayerId;
+                            }
+                            if (sortingOrder > 0)
+                            {
+                                r.sortingOrder = Math.Min(32700, Math.Max(r.sortingOrder, sortingOrder));
+                            }
+                            try
+                            {
+                                if (r.materials != null)
+                                {
+                                    foreach (var mat in r.materials)
+                                    {
+                                        if (mat != null)
+                                        {
+                                            mat.renderQueue = 4000;
+                                            if (mat.HasProperty("_ZTest"))
+                                            {
+                                                mat.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                TarotCardReceiverPlugin.Log?.LogWarning($"[PaymentManager] Error emitting smoke VFX: {ex.Message}");
+            }
         }
 
         private void OnGUI()

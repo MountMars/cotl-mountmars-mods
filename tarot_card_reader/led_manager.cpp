@@ -240,6 +240,113 @@ void led_animation_ritual_heartbeat() {
   pixels.show();
 }
 
+void led_animation_midas_pay() {
+  // ---------------------------------------------------------------------------
+  // "The MidasPAY Audio-Lock & Coin Shimmer"
+  // Core satisfaction trigger tuned to applepay.wav ("ding... DING!").
+  // Current-safe for ESP32 5V pin (< 200mA peak, ~70mA average).
+  // ---------------------------------------------------------------------------
+
+  // ===========================================================================
+  // STAGE 1 (0–160ms): Tone 1 ("ding") - High-Speed Orbital Charge-Up
+  // A tight 3-LED golden spark completes 1 rapid full 360° orbit,
+  // accelerating and slamming into the top (LED 0).
+  // ===========================================================================
+  const unsigned long DURATION_ORBIT = 160;
+  static const float orbitWeights[3] = { 1.0f, 0.55f, 0.20f };
+  const float orbitR = 200.0f;
+  const float orbitG = 130.0f;
+
+  unsigned long startMs = millis();
+  while (true) {
+    unsigned long elapsed = millis() - startMs;
+    if (elapsed >= DURATION_ORBIT) break;
+
+    float progress = (float)elapsed / (float)DURATION_ORBIT; // 0.0 to 1.0
+    // Quadratic acceleration into the top impact point
+    float eased = progress * (0.4f + 0.6f * progress);
+    float pos = eased * (float)LED_NUMPIXELS;
+    int head = (int)pos % LED_NUMPIXELS;
+
+    pixels.clear();
+    for (int k = 0; k < 3; k++) {
+      int idx = (head - k) % LED_NUMPIXELS;
+      if (idx < 0) idx += LED_NUMPIXELS;
+      uint8_t r = (uint8_t)(orbitR * orbitWeights[k]);
+      uint8_t g = (uint8_t)(orbitG * orbitWeights[k]);
+      pixels.setPixelColor(idx, pixels.Color(r, g, 0));
+    }
+    pixels.show();
+    delay(4);
+  }
+
+  // ===========================================================================
+  // STAGE 2 (160–280ms, 120ms): Tone 2 ("DING!") - Triumphant Golden Halo
+  // The impact locks in, bursting instantaneously into a solid radiant halo.
+  // Held through the peak of the chime. Current-capped (R=115, G=65) to protect 5V rail.
+  // ===========================================================================
+  const uint8_t haloR = 115;
+  const uint8_t haloG = 65;
+  uint32_t goldHalo = pixels.Color(haloR, haloG, 0);
+
+  for (int i = 0; i < LED_NUMPIXELS; i++) {
+    pixels.setPixelColor(i, goldHalo);
+  }
+  pixels.show();
+  delay(120);
+
+  // ===========================================================================
+  // STAGE 3 (280–650ms, 370ms): The Reward - Sparkling Coin Shimmer
+  // Background smoothly fades to black while 3-4 random LEDs twinkle with
+  // bright white-gold coin glints (*ping!*), creating the tactile feel of
+  // glittering gold coins settling in a vault.
+  // ===========================================================================
+  const unsigned long DURATION_SHIMMER = 370;
+  unsigned long shimmerStart = millis();
+
+  while (true) {
+    unsigned long elapsed = millis() - shimmerStart;
+    if (elapsed >= DURATION_SHIMMER) break;
+
+    float progress = (float)elapsed / (float)DURATION_SHIMMER; // 0.0 to 1.0
+    float bgFactor = powf(1.0f - progress, 2.2f);
+
+    uint8_t baseR = (uint8_t)(haloR * bgFactor);
+    uint8_t baseG = (uint8_t)(haloG * bgFactor);
+
+    // Damping factor so sparkles gently diminish toward the end
+    float sparkleIntensity = powf(1.0f - progress, 1.2f);
+
+    for (int i = 0; i < LED_NUMPIXELS; i++) {
+      uint8_t r = baseR;
+      uint8_t g = baseG;
+      uint8_t b = 0;
+
+      // ~15% chance per LED per frame to catch a sparkling coin glint
+      if (random(0, 100) < 15) {
+        float glint = ((float)random(50, 100) / 100.0f) * sparkleIntensity;
+        // Bright pale gold with a touch of white sparkle
+        uint16_t addR = (uint16_t)(240.0f * glint);
+        uint16_t addG = (uint16_t)(175.0f * glint);
+        uint16_t addB = (uint16_t)(35.0f * glint);
+
+        r = (r + addR > 255) ? 255 : (uint8_t)(r + addR);
+        g = (g + addG > 255) ? 255 : (uint8_t)(g + addG);
+        b = (b + addB > 255) ? 255 : (uint8_t)(b + addB);
+      }
+
+      pixels.setPixelColor(i, pixels.Color(r, g, b));
+    }
+
+    pixels.show();
+    delay(12); // ~80 fps shimmer refresh
+  }
+
+  // Clear and turn off all LEDs when animation completes
+  pixels.clear();
+  pixels.show();
+}
+
 void led_play_card_animation(uint32_t color) {
   if (color != 0) {
     led_animation_quad_spin(color);

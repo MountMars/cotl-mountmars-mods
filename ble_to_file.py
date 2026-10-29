@@ -25,6 +25,18 @@ FIRE_WHOOSH_SOUNDS = [
 ]
 AVAILABLE_FIRE_WHOOSH_SOUNDS = [path for path in FIRE_WHOOSH_SOUNDS if os.path.isfile(path)]
 SPIDER_WARNING_SOUND = os.path.join(SCRIPT_DIR, "Spider Warning.wav")
+APPLEPAY_SOUND = os.path.join(SCRIPT_DIR, "applepay.wav")
+
+
+def play_applepay_sound():
+    if not os.path.isfile(APPLEPAY_SOUND):
+        log_bridge(f"[Audio] ApplePay sound not found at '{APPLEPAY_SOUND}'")
+        return
+
+    try:
+        winsound.PlaySound(APPLEPAY_SOUND, winsound.SND_FILENAME | winsound.SND_ASYNC)
+    except Exception as ex:
+        log_bridge(f"[Audio] Error playing sound: {ex}")
 
 
 def play_fire_whoosh_sound():
@@ -96,7 +108,12 @@ async def ble_receiver_worker(config: dict):
 
                     if card_message:
                         write_tarot_ipc_file(card_message, target_file=TAROT_IPC_FILE, base_dir=script_dir)
-                        if card_message.strip().lower() in ("increaseddamage", "33", "spider", "8") or raw_text.strip().lower() in ("increaseddamage", "spider"):
+                        lowered = card_message.strip().lower()
+                        raw_lowered = raw_text.strip().lower()
+
+                        if lowered in ("card payment", "card_payment", "payment") or raw_lowered in ("card payment", "card_payment", "payment"):
+                            play_applepay_sound()
+                        elif lowered in ("increaseddamage", "33", "spider", "8") or raw_lowered in ("increaseddamage", "spider"):
                             play_spider_warning_sound()
                         else:
                             play_fire_whoosh_sound()

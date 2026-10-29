@@ -63,7 +63,8 @@ namespace COTLTarotCardReceiver
         [HarmonyPrefix]
         public static bool Prefix(Interaction_FollowerInSpiderWeb __instance, StateMachine state)
         {
-            if (!PaymentManager.Instance.IsFulfillingPayment)
+            if (!PaymentManager.Instance.IsFulfillingPayment &&
+                PaymentManager.IsEligiblePurchaseInteraction(__instance))
             {
                 TarotCardReceiverPlugin.Log?.LogInfo("[PaymentPatches] Intercepted Interaction_FollowerInSpiderWeb.OnInteract directly");
                 PaymentManager.Instance.StartPayment(__instance, PlayerFarming.Instance);
@@ -80,7 +81,8 @@ namespace COTLTarotCardReceiver
         [HarmonyPrefix]
         public static bool Prefix(Interaction_FollowerInSpiderWebDailyShop __instance, StateMachine state)
         {
-            if (!PaymentManager.Instance.IsFulfillingPayment)
+            if (!PaymentManager.Instance.IsFulfillingPayment &&
+                PaymentManager.IsEligiblePurchaseInteraction(__instance))
             {
                 TarotCardReceiverPlugin.Log?.LogInfo("[PaymentPatches] Intercepted Interaction_FollowerInSpiderWebDailyShop.OnInteract directly");
                 PaymentManager.Instance.StartPayment(__instance, PlayerFarming.Instance);
@@ -97,7 +99,8 @@ namespace COTLTarotCardReceiver
         [HarmonyPrefix]
         public static bool Prefix(Interaction_BuyItem __instance, StateMachine state)
         {
-            if (!PaymentManager.Instance.IsFulfillingPayment)
+            if (!PaymentManager.Instance.IsFulfillingPayment &&
+                PaymentManager.IsEligiblePurchaseInteraction(__instance))
             {
                 TarotCardReceiverPlugin.Log?.LogInfo("[PaymentPatches] Intercepted Interaction_BuyItem.OnInteract directly");
                 PaymentManager.Instance.StartPayment(__instance, PlayerFarming.Instance);
@@ -114,7 +117,8 @@ namespace COTLTarotCardReceiver
         [HarmonyPrefix]
         public static bool Prefix(Interaction_Tarot __instance, StateMachine state)
         {
-            if (!PaymentManager.Instance.IsFulfillingPayment)
+            if (!PaymentManager.Instance.IsFulfillingPayment &&
+                PaymentManager.IsEligiblePurchaseInteraction(__instance))
             {
                 TarotCardReceiverPlugin.Log?.LogInfo("[PaymentPatches] Intercepted Interaction_Tarot.OnInteract directly");
                 PaymentManager.Instance.StartPayment(__instance, PlayerFarming.Instance);
